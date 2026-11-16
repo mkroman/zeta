@@ -16,7 +16,7 @@ use crate::bench::policy::{self, Verdict, counts, suite_totals};
 
 /// How much of the report to render.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct ReportOptions {
+pub(crate) struct ReportOptions {
     /// Keep the complete inventory (instead of per-suite counts) and the static
     /// cross-implementation ratios. The baseline job renders the full report; pull-request
     /// summaries stay concise.
@@ -25,7 +25,7 @@ pub struct ReportOptions {
 
 /// Short verdict phrase, used as the check-run title.
 #[must_use]
-pub fn title(run: &RunSummary) -> &'static str {
+pub(crate) fn title(run: &RunSummary) -> &'static str {
     verdict_title(policy::verdict(run))
 }
 
@@ -41,7 +41,7 @@ const fn verdict_title(verdict: Verdict) -> &'static str {
 
 /// One-line verdict and counts, without the table's repeated detail.
 #[must_use]
-pub fn headline(run: &RunSummary) -> String {
+pub(crate) fn headline(run: &RunSummary) -> String {
     let verdict = policy::verdict(run);
     let counts = counts(&run.benchmarks);
     let detail = tier_summary(&counts);
@@ -107,7 +107,7 @@ const fn tier_label(tier: Tier, count: usize) -> &'static str {
 
 /// The single metadata line: baseline identity, toolchain and `Cargo.lock` state.
 #[must_use]
-pub fn metadata_line(run: &RunSummary) -> String {
+pub(crate) fn metadata_line(run: &RunSummary) -> String {
     if !run.baseline_found {
         return "No last-known-good baseline artifact — counts recorded, nothing to compare."
             .to_owned();
@@ -166,7 +166,7 @@ pub fn metadata_line(run: &RunSummary) -> String {
 
 /// One compact line when the baseline was recorded with a different toolchain.
 #[must_use]
-pub fn mismatch_line(run: &RunSummary) -> Option<String> {
+pub(crate) fn mismatch_line(run: &RunSummary) -> Option<String> {
     if run.toolchain_matched {
         return None;
     }
@@ -203,7 +203,7 @@ fn tool_version<'a>(key: &str, value: &'a str) -> &'a str {
 
 /// Build the Markdown report for `run`.
 #[must_use]
-pub fn build_report(run: &RunSummary, options: ReportOptions) -> String {
+pub(crate) fn build_report(run: &RunSummary, options: ReportOptions) -> String {
     let mut lines = vec![
         "## Bench report".to_owned(),
         String::new(),
@@ -519,7 +519,7 @@ fn cap<'a>(benchmarks: &[&'a Benchmark], limit: usize) -> (Vec<&'a Benchmark>, u
 /// One delta-focused table. Allocation deltas appear only when at least one row changed an
 /// allocation count; unchanged columns are otherwise dropped.
 #[must_use]
-pub fn table(benchmarks: &[&Benchmark]) -> Vec<String> {
+pub(crate) fn table(benchmarks: &[&Benchmark]) -> Vec<String> {
     let include_allocations = benchmarks.iter().any(|benchmark| {
         benchmark
             .dhat_blocks

@@ -40,7 +40,7 @@ impl Resource {
 
 /// Records posted URLs in the database and reports their history.
 #[derive(Debug, Clone)]
-pub struct OfnService {
+pub(crate) struct OfnService {
     /// The repository backing the service.
     repo: OfnRepository,
 }
@@ -48,7 +48,7 @@ pub struct OfnService {
 impl OfnService {
     /// Creates a new service backed by the given database pool.
     #[must_use]
-    pub const fn new(db: Database) -> Self {
+    pub(crate) const fn new(db: Database) -> Self {
         Self {
             repo: OfnRepository::new(db),
         }
@@ -65,7 +65,7 @@ impl OfnService {
     ///
     /// Returns [`Error::Database`] if a lookup failed, or [`Error::InsertUrlNoHost`] if the
     /// URL has no host.
-    pub async fn record_url(
+    pub(crate) async fn record_url(
         &self,
         origin: &ChannelMessageOrigin<'_>,
         url: &Url,
@@ -124,7 +124,7 @@ impl OfnService {
     /// # Errors
     ///
     /// Returns [`Error::Database`] if the counts could not be queried from the database.
-    pub async fn stats(&self) -> Result<Statistics, Error> {
+    pub(crate) async fn stats(&self) -> Result<Statistics, Error> {
         self.repo.statistics(Utc::now().date_naive()).await
     }
 }

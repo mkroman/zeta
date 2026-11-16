@@ -12,7 +12,7 @@ use crate::json::{self, Value};
 
 /// One metric's new value, baseline value and recorded percentage difference.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct Metrics {
+pub(crate) struct Metrics {
     pub new: Option<u64>,
     pub old: Option<u64>,
     pub pct: Option<f64>,
@@ -20,7 +20,7 @@ pub struct Metrics {
 
 impl Metrics {
     #[must_use]
-    pub fn delta(&self) -> Option<i64> {
+    pub(crate) fn delta(&self) -> Option<i64> {
         let new = i64::try_from(self.new?).ok()?;
         let old = i64::try_from(self.old?).ok()?;
         new.checked_sub(old)
@@ -29,7 +29,7 @@ impl Metrics {
 
 /// Verdict tier for one benchmark case.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Tier {
+pub(crate) enum Tier {
     Regressed,
     Warning,
     Waived,
@@ -40,7 +40,7 @@ pub enum Tier {
 }
 
 impl Tier {
-    pub const ALL: [Self; 7] = [
+    pub(crate) const ALL: [Self; 7] = [
         Self::Regressed,
         Self::Warning,
         Self::Waived,
@@ -51,7 +51,7 @@ impl Tier {
     ];
 
     #[must_use]
-    pub const fn label(self) -> &'static str {
+    pub(crate) const fn label(self) -> &'static str {
         match self {
             Self::Regressed => "regression",
             Self::Warning => "warning",
@@ -66,7 +66,7 @@ impl Tier {
 
 /// One measured benchmark case.
 #[derive(Clone, Debug)]
-pub struct Benchmark {
+pub(crate) struct Benchmark {
     pub suite: String,
     pub function: String,
     pub case: Option<String>,
@@ -80,13 +80,13 @@ pub struct Benchmark {
 
 impl Benchmark {
     #[must_use]
-    pub fn label(&self) -> String {
+    pub(crate) fn label(&self) -> String {
         config::label(&self.function, self.case.as_deref())
     }
 }
 
 /// One run's inputs for policy decisions and rendering.
-pub struct RunSummary {
+pub(crate) struct RunSummary {
     pub benchmarks: Vec<Benchmark>,
     pub baseline: Metadata,
     pub current: Metadata,
@@ -97,7 +97,7 @@ pub struct RunSummary {
 }
 
 /// Load every summary below `directory`.
-pub fn load(directory: &Path) -> Result<Vec<Benchmark>> {
+pub(crate) fn load(directory: &Path) -> Result<Vec<Benchmark>> {
     let mut summaries = Vec::new();
     collect_summaries(directory, &mut summaries)?;
     summaries.sort();
@@ -228,7 +228,7 @@ fn parse_percent(raw: &str) -> Option<f64> {
 
 /// Indexes over the measured benchmarks, shared by rendering and configuration checks.
 #[derive(Debug, Default)]
-pub struct Inventory {
+pub(crate) struct Inventory {
     pub cases_by_function: BTreeMap<String, BTreeSet<String>>,
     pub functions_by_suite: BTreeMap<String, BTreeMap<String, BTreeSet<String>>>,
     pub suites: BTreeSet<String>,
@@ -236,7 +236,7 @@ pub struct Inventory {
 
 impl Inventory {
     #[must_use]
-    pub fn build(benchmarks: &[Benchmark]) -> Self {
+    pub(crate) fn build(benchmarks: &[Benchmark]) -> Self {
         let mut inventory = Self::default();
         for benchmark in benchmarks {
             inventory.suites.insert(benchmark.suite.clone());
@@ -265,13 +265,17 @@ impl Inventory {
     }
 
     #[must_use]
-    pub fn reference_cases(&self, suite: &str, reference: &str) -> Option<&BTreeSet<String>> {
+    pub(crate) fn reference_cases(
+        &self,
+        suite: &str,
+        reference: &str,
+    ) -> Option<&BTreeSet<String>> {
         self.functions_by_suite.get(suite)?.get(reference)
     }
 
     /// Functions in `suite` using exactly the reference's case-id set.
     #[must_use]
-    pub fn comparison_members(&self, suite: &str, reference: &str) -> Vec<String> {
+    pub(crate) fn comparison_members(&self, suite: &str, reference: &str) -> Vec<String> {
         let Some(functions) = self.functions_by_suite.get(suite) else {
             return Vec::new();
         };

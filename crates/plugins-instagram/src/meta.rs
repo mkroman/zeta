@@ -24,7 +24,7 @@ static OG_DESCRIPTION_SELECTOR: LazyLock<Selector> = LazyLock::new(|| {
 
 /// The OpenGraph metadata of an Instagram page.
 #[derive(Debug, Default, Eq, PartialEq)]
-pub struct PageMetadata {
+pub(crate) struct PageMetadata {
     /// The `content` of the first `og:title` meta tag.
     pub og_title: Option<String>,
     /// The `content` of the first `og:description` meta tag.
@@ -33,7 +33,7 @@ pub struct PageMetadata {
 
 /// The details of a piece of Instagram media, extracted from whichever source provided them.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct MediaDetails {
+pub(crate) struct MediaDetails {
     /// The username of the media's author.
     pub author: Option<String>,
     /// The media's caption.
@@ -47,7 +47,7 @@ impl MediaDetails {
     /// title is generic — as it is on login walls — no details can be extracted. An empty caption
     /// falls back to the `og:description`.
     #[must_use]
-    pub fn from_og(meta: &PageMetadata) -> Option<Self> {
+    pub(crate) fn from_og(meta: &PageMetadata) -> Option<Self> {
         let title = meta
             .og_title
             .as_deref()
@@ -95,7 +95,7 @@ const SHORTCODE_ALPHABET: &[u8; 64] =
 /// Returns `None` when the shortcode is empty, carries a character outside the alphabet, or does
 /// not fit a `u128`.
 #[must_use]
-pub fn shortcode_to_media_pk(shortcode: &str) -> Option<u128> {
+pub(crate) fn shortcode_to_media_pk(shortcode: &str) -> Option<u128> {
     if shortcode.is_empty() {
         return None;
     }
@@ -112,7 +112,7 @@ pub fn shortcode_to_media_pk(shortcode: &str) -> Option<u128> {
 }
 
 /// The errors a page fetch can produce: a transport failure or an unsuccessful status.
-pub type Error = ResponseError;
+pub(crate) type Error = ResponseError;
 
 /// Fetches `url` and extracts its OpenGraph metadata.
 ///
@@ -124,7 +124,7 @@ pub type Error = ResponseError;
 /// # Errors
 ///
 /// Returns an error if the request fails or the server responds with an error status.
-pub async fn fetch(
+pub(crate) async fn fetch(
     client: &wreq::Client,
     url: &str,
     session_cookie: Option<&str>,

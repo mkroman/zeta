@@ -37,7 +37,7 @@ const ENTRY_BUDGET: usize = REPLY_BUDGET - SUFFIX.len();
 /// carries the category of its base character. A listing that does not fit
 /// [`MAX_LISTING_LENGTH`] once the plain reply prefix is added stops with [`SUFFIX`], and a
 /// grouped sequence's codepoint list is budgeted the same way.
-pub fn unicode_details(args: &str) -> String {
+pub(crate) fn unicode_details(args: &str) -> String {
     let mut message = String::with_capacity(REPLY_BUDGET);
     let mut entry = String::with_capacity(ENTRY_BUDGET);
     let mut name = String::new();

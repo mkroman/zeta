@@ -12,7 +12,11 @@ use zeta_utils::text::TruncatableExt;
 use crate::meta::MediaDetails;
 
 /// Formats the media details as a human-readable summary of the media.
-pub fn format_summary(details: &MediaDetails, kind: &str, caption_length: usize) -> Option<String> {
+pub(crate) fn format_summary(
+    details: &MediaDetails,
+    kind: &str,
+    caption_length: usize,
+) -> Option<String> {
     let mut buf = String::new();
 
     if let Some(caption) = details

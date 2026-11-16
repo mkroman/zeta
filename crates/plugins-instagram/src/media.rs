@@ -176,6 +176,6 @@ impl Instagram {
 /// The proxy serves the OpenGraph metadata of Instagram media, so the media path is the canonical
 /// one.
 #[must_use]
-pub fn proxy_media_url(proxy: &str, kind: MediaKind, id: &str) -> String {
+pub(crate) fn proxy_media_url(proxy: &str, kind: MediaKind, id: &str) -> String {
     format!("{}/{}/{}", proxy.trim_end_matches('/'), kind.segment(), id)
 }

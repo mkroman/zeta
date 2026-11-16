@@ -24,12 +24,12 @@ const TOOLCHAIN_KEYS: &[&str] = &[
 
 /// A key-value view over the recorded environment.
 #[derive(Debug, Default)]
-pub struct Metadata {
+pub(crate) struct Metadata {
     values: BTreeMap<String, String>,
 }
 
 /// One metadata key that differs between the baseline and the current run.
-pub struct Mismatch {
+pub(crate) struct Mismatch {
     pub key: String,
     pub baseline: String,
     pub current: String,
@@ -37,7 +37,7 @@ pub struct Mismatch {
 
 impl Metadata {
     /// Read a metadata file; a missing file yields empty metadata (no baseline recorded).
-    pub fn read(path: &Path) -> Result<Self> {
+    pub(crate) fn read(path: &Path) -> Result<Self> {
         if !path.is_file() {
             return Ok(Self::default());
         }
@@ -54,7 +54,7 @@ impl Metadata {
         Self { values }
     }
 
-    pub fn write(&self, path: &Path) -> Result<()> {
+    pub(crate) fn write(&self, path: &Path) -> Result<()> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -69,16 +69,16 @@ impl Metadata {
         Ok(())
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.values.is_empty()
     }
 
-    pub fn get(&self, key: &str) -> &str {
+    pub(crate) fn get(&self, key: &str) -> &str {
         self.values.get(key).map_or("", String::as_str)
     }
 
     /// Age of the baseline in whole days, if a timestamp was recorded.
-    pub fn age_days(&self) -> Option<i64> {
+    pub(crate) fn age_days(&self) -> Option<i64> {
         self.get("unix-time")
             .parse::<i64>()
             .ok()
@@ -87,7 +87,7 @@ impl Metadata {
 
     /// Differences in the keys that make instruction counts comparable. Without metadata on
     /// both sides there is nothing to compare.
-    pub fn mismatches(&self, current: &Self) -> Vec<Mismatch> {
+    pub(crate) fn mismatches(&self, current: &Self) -> Vec<Mismatch> {
         if self.is_empty() || current.is_empty() {
             return Vec::new();
         }
@@ -107,7 +107,7 @@ impl Metadata {
 }
 
 /// Record the environment that produced the counts into `output`.
-pub fn record(output: &Path, toolchain: &str) -> Result<()> {
+pub(crate) fn record(output: &Path, toolchain: &str) -> Result<()> {
     let root = workspace_root();
     let mut values = BTreeMap::new();
 

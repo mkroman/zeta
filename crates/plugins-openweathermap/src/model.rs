@@ -4,7 +4,7 @@ use serde::Deserialize;
 
 /// Result from the Geocoding API.
 #[derive(Deserialize, Debug)]
-pub struct GeocodingResult {
+pub(crate) struct GeocodingResult {
     /// Latitude.
     pub(super) lat: f64,
     /// Longitude.
@@ -13,7 +13,7 @@ pub struct GeocodingResult {
 
 /// Result from the Current Weather Data API.
 #[derive(Deserialize, Debug)]
-pub struct WeatherResponse {
+pub(crate) struct WeatherResponse {
     /// City name.
     pub(super) name: String,
     /// System parameters.
@@ -30,14 +30,14 @@ pub struct WeatherResponse {
 
 /// System parameters (country, timestamps, etc.).
 #[derive(Deserialize, Debug)]
-pub struct Sys {
+pub(crate) struct Sys {
     /// Country code (e.g. "DK", "US").
     pub(super) country: Option<String>,
 }
 
 /// Main weather parameters.
 #[derive(Deserialize, Debug)]
-pub struct Main {
+pub(crate) struct Main {
     /// Temperature in the configured unit.
     pub(super) temp: f64,
     /// Feels-like temperature in the configured unit.
@@ -50,14 +50,14 @@ pub struct Main {
 
 /// Weather condition description.
 #[derive(Deserialize, Debug)]
-pub struct WeatherDescription {
+pub(crate) struct WeatherDescription {
     /// Weather condition within the group.
     pub(super) description: String,
 }
 
 /// Wind statistics.
 #[derive(Deserialize, Debug)]
-pub struct Wind {
+pub(crate) struct Wind {
     /// Wind speed in the configured unit.
     pub(super) speed: f64,
     /// Wind gust in the configured unit.
@@ -66,7 +66,7 @@ pub struct Wind {
 
 /// Cloud coverage.
 #[derive(Deserialize, Debug)]
-pub struct Clouds {
+pub(crate) struct Clouds {
     /// Cloudiness, %.
     pub(super) all: u8,
 }

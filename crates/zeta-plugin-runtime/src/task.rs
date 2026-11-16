@@ -26,7 +26,7 @@ use crate::dispatch::Envelope;
 /// drain its queued events, run the shutdown hook and exit. A panicking handler still runs the
 /// shutdown hook; the panic is re-raised afterwards so the task keeps its panic status.
 #[must_use = "dropping the task handle detaches the plugin task instead of stopping it"]
-pub struct PluginTask<P> {
+pub(crate) struct PluginTask<P> {
     /// The name of the plugin, used for logging.
     pub name: &'static str,
     /// The handle of the spawned plugin task.
@@ -50,7 +50,7 @@ where
     /// `loaded` hook returns, whether it succeeded or failed. A hook that panics drops the sender
     /// without reporting, which resolves the host's receiver immediately; the host's grace bounds
     /// a hook that stalls instead.
-    pub fn spawn(
+    pub(crate) fn spawn(
         name: &'static str,
         mut plugin: P,
         ctx: Arc<Context>,
@@ -173,7 +173,7 @@ where
     /// returned handle — bounded by a deadline — waits for the plugin to drain its queue and
     /// run its shutdown hook.
     #[must_use]
-    pub fn into_handle(self) -> (&'static str, JoinHandle<()>) {
+    pub(crate) fn into_handle(self) -> (&'static str, JoinHandle<()>) {
         (self.name, self.handle)
     }
 }

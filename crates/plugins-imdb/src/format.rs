@@ -25,7 +25,7 @@ static PREFIX: OnceLock<String> = OnceLock::new();
 /// cyan and the prefix carries no trailing space: the builders below append space-led segments,
 /// so a trailing space here would double up.
 #[must_use]
-pub fn prefix() -> &'static str {
+pub(crate) fn prefix() -> &'static str {
     PREFIX
         .get_or_init(|| format!("{REPLY_MARKER}{RESET}{BOLD} IMDb{BOLD}{COLOR}:{RESET}"))
         .as_str()

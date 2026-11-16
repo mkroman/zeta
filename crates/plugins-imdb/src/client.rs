@@ -27,7 +27,7 @@ use zeta_http::reqwest;
 use zeta_http::reqwest::header::{ACCEPT, HeaderMap, HeaderName, HeaderValue, ORIGIN, REFERER};
 
 /// GraphQL endpoint of IMDb's internal API.
-pub const GRAPHQL_URL: &str = "https://api.graphql.imdb.com/";
+pub(crate) const GRAPHQL_URL: &str = "https://api.graphql.imdb.com/";
 
 /// A client for IMDb's internal GraphQL API.
 pub struct GraphQlClient {

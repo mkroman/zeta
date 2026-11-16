@@ -9,7 +9,7 @@ use zeta_http as http;
 use zeta_http::reqwest;
 
 /// The default base URL of the unwall API.
-pub const DEFAULT_API_BASE: &str = "https://api.unwall.app/";
+pub(crate) const DEFAULT_API_BASE: &str = "https://api.unwall.app/";
 
 /// Parses `input` as a base URL, ensuring it ends in a slash so its endpoints can be
 /// [`Url::join`]ed onto it.
@@ -17,7 +17,7 @@ pub const DEFAULT_API_BASE: &str = "https://api.unwall.app/";
 /// # Errors
 ///
 /// Returns [`Error::BaseUrl`] if `input` cannot be parsed.
-pub fn base_url(input: &str) -> Result<Url, Error> {
+pub(crate) fn base_url(input: &str) -> Result<Url, Error> {
     let mut base = Url::parse(input)?;
 
     if !base.path().ends_with('/') {

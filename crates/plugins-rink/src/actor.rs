@@ -18,11 +18,11 @@ use super::render::{error_message, render_reply};
 
 /// A handle to the rink actor task.
 #[derive(Clone)]
-pub struct Handle(mpsc::UnboundedSender<Request>);
+pub(crate) struct Handle(mpsc::UnboundedSender<Request>);
 
 /// Whether an evaluation rewrites the line before running it.
 #[derive(Debug, Clone, Copy)]
-pub enum Rewrite {
+pub(crate) enum Rewrite {
     /// Case-correct unit tokens rink cannot resolve before evaluating.
     Classify,
     /// Evaluate the line as written.
@@ -30,7 +30,7 @@ pub enum Rewrite {
 }
 
 /// The rendered outcome of an evaluation request.
-pub enum EvalOutcome {
+pub(crate) enum EvalOutcome {
     /// The final IRC reply, including the reply marker.
     Answer(String),
     /// The query needs currency data that is not loaded yet.

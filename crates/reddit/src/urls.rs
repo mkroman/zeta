@@ -48,25 +48,25 @@ const USERNAME_ALLOWED: &str = "_-";
 /// a `t3_` fullname, a path or query fragment — is rejected before it can be interpolated into
 /// a request URL.
 #[must_use]
-pub fn is_id(segment: &str) -> bool {
+pub(crate) fn is_id(segment: &str) -> bool {
     zeta_url::is_identifier(segment, "")
 }
 
 /// Returns whether `segment` is a valid subreddit name — ASCII alphanumerics and underscores.
 #[must_use]
-pub fn is_subreddit(segment: &str) -> bool {
+pub(crate) fn is_subreddit(segment: &str) -> bool {
     zeta_url::is_identifier(segment, SUBREDDIT_ALLOWED)
 }
 
 /// Returns whether `segment` is a valid username — ASCII alphanumerics, hyphens and underscores.
 #[must_use]
-pub fn is_username(segment: &str) -> bool {
+pub(crate) fn is_username(segment: &str) -> bool {
     zeta_url::is_identifier(segment, USERNAME_ALLOWED)
 }
 
 /// Parses reddit.com URLs
 #[must_use]
-pub fn classify_reddit_com_url(url: &Url) -> Option<Link> {
+pub(crate) fn classify_reddit_com_url(url: &Url) -> Option<Link> {
     match zeta_url::path_segments(url)?.as_slice() {
         // Direct link to a subreddit
         //

@@ -24,7 +24,7 @@ const SUCCESS_MESSAGES: &[&str] = &[
 ];
 
 /// Returns a random success message.
-pub fn success_message() -> &'static str {
+pub(crate) fn success_message() -> &'static str {
     SUCCESS_MESSAGES
         .iter()
         .choose(&mut rand::rng())
@@ -42,7 +42,7 @@ const MAX_LISTED_MESSAGE_CHARS: usize = 50;
 /// At most [`MAX_LISTED_ALERTS`] alerts are included, and entries are only appended while the
 /// listing stays within [`MAX_LISTING_LENGTH`]; the count in the header always reflects every
 /// pending alert.
-pub fn format_pending(pending: &[Alert]) -> String {
+pub(crate) fn format_pending(pending: &[Alert]) -> String {
     if pending.is_empty() {
         return labeled_reply("Alert", "You have no pending alerts");
     }

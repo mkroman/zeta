@@ -18,7 +18,7 @@ use rink_core::parsing::text_query::{TokenIterator, parse_query};
 /// units, substances, base units and pending dependencies — and replaced when exactly one
 /// candidate exists. Queries that end up untouched, including ones the parser cannot make
 /// sense of, are returned unchanged.
-pub fn classify(ctx: &RinkContext, line: &str) -> String {
+pub(crate) fn classify(ctx: &RinkContext, line: &str) -> String {
     let mut iter = TokenIterator::new(line.trim()).peekable();
     let mut query = parse_query(&mut iter);
 

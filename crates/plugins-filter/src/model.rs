@@ -5,7 +5,7 @@ use wildmatch::WildMatch;
 
 /// Whether `pattern` contains wildcards.
 #[must_use]
-pub fn is_wildcard(pattern: &str) -> bool {
+pub(crate) fn is_wildcard(pattern: &str) -> bool {
     pattern.contains('*') || pattern.contains('?')
 }
 
@@ -57,7 +57,7 @@ pub struct NewFilter {
 
 /// The case sensitivity of a wildcard pattern comparison.
 #[derive(Debug, Clone, Copy)]
-pub enum Case {
+pub(crate) enum Case {
     /// URL paths are matched case-sensitively.
     Sensitive,
     /// Every other field is matched case-insensitively.
@@ -146,7 +146,7 @@ enum Matcher {
 ///
 /// A missing or blank pattern is unset and matches everything, mirroring the filter semantics.
 #[derive(Debug, Clone, Default)]
-pub struct Pattern {
+pub(crate) struct Pattern {
     /// The compiled matcher.
     matcher: Matcher,
 }
@@ -154,7 +154,7 @@ pub struct Pattern {
 impl Pattern {
     /// Compiles `raw`, trimming it and treating a blank pattern as unset.
     #[must_use]
-    pub fn compile(raw: Option<&str>, case: Case) -> Self {
+    pub(crate) fn compile(raw: Option<&str>, case: Case) -> Self {
         let matcher = raw
             .map(str::trim)
             .filter(|pattern| !pattern.is_empty())
@@ -193,13 +193,13 @@ impl Pattern {
 
     /// Whether the pattern is unset.
     #[must_use]
-    pub const fn is_unset(&self) -> bool {
+    pub(crate) const fn is_unset(&self) -> bool {
         matches!(&self.matcher, Matcher::Unset)
     }
 
     /// Whether the pattern matches `value`, or is unset (an unset criterion matches anything).
     #[must_use]
-    pub fn matches(&self, value: Option<&str>) -> bool {
+    pub(crate) fn matches(&self, value: Option<&str>) -> bool {
         let Some(value) = value else {
             return self.is_unset();
         };

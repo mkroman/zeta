@@ -21,7 +21,10 @@ impl OfnRepository {
     ///
     /// Returns [`Error::Database`] if the URL record could not be fetched.
     #[instrument_database(operation = "SELECT", collection = "url_records")]
-    pub async fn find_url(&self, record: &InsertUrlRecord) -> Result<Option<UrlRecord>, Error> {
+    pub(crate) async fn find_url(
+        &self,
+        record: &InsertUrlRecord,
+    ) -> Result<Option<UrlRecord>, Error> {
         trace!(url.domain = %record.host, "loading url record from database");
 
         sqlx::query_as(
@@ -54,7 +57,7 @@ impl OfnRepository {
     ///
     /// Returns [`Error::Database`] if the video record could not be fetched.
     #[instrument_database(operation = "SELECT", collection = "youtube_video_urls")]
-    pub async fn find_youtube_video(
+    pub(crate) async fn find_youtube_video(
         &self,
         video_id: &str,
         channel: &str,
@@ -86,7 +89,7 @@ impl OfnRepository {
     ///
     /// Returns [`Error::Database`] if the record could not be inserted.
     #[instrument_database(operation = "INSERT", collection = "url_records")]
-    pub async fn insert_url(&self, record: &InsertUrlRecord) -> Result<(), Error> {
+    pub(crate) async fn insert_url(&self, record: &InsertUrlRecord) -> Result<(), Error> {
         trace!("inserting url record into database");
 
         sqlx::query(
@@ -128,7 +131,10 @@ impl OfnRepository {
     ///
     /// Returns [`Error::Database`] if the record could not be inserted.
     #[instrument_database(operation = "INSERT", collection = "youtube_video_urls")]
-    pub async fn insert_youtube_video(&self, record: &InsertYouTubeRecord) -> Result<(), Error> {
+    pub(crate) async fn insert_youtube_video(
+        &self,
+        record: &InsertYouTubeRecord,
+    ) -> Result<(), Error> {
         trace!(
             media.id = %record.video_id,
             "inserting youtube video record into database"
@@ -167,7 +173,7 @@ impl OfnRepository {
         collection = "url_records",
         summary = "SELECT ofn statistics"
     )]
-    pub async fn statistics(&self, today: NaiveDate) -> Result<Statistics, Error> {
+    pub(crate) async fn statistics(&self, today: NaiveDate) -> Result<Statistics, Error> {
         trace!(ofn.statistics.date = %today, "loading ofn statistics from database");
 
         let (num_urls, num_urls_today, num_yt_ids, num_yt_ids_today): (i64, i64, i64, i64) =

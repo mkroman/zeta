@@ -14,13 +14,13 @@ use crate::error::{Error, Result};
 use crate::json::{self, Value};
 use crate::workspace_root;
 
-pub struct PublishOptions {
+pub(crate) struct PublishOptions {
     pub verdict: PathBuf,
     pub report: PathBuf,
     pub dry_run: bool,
 }
 
-pub fn publish(options: &PublishOptions) -> Result<()> {
+pub(crate) fn publish(options: &PublishOptions) -> Result<()> {
     let verdict: Value = json::parse(&fs::read_to_string(&options.verdict)?)?;
     let report = fs::read_to_string(&options.report)?;
     let repository = std::env::var("GITHUB_REPOSITORY").unwrap_or_default();
@@ -193,7 +193,7 @@ fn post(path: &str, payload: &Value, dry_run: bool) {
 }
 
 /// Validate that the report and verdict files exist before publishing.
-pub fn prepare(options: &PublishOptions) -> Result<()> {
+pub(crate) fn prepare(options: &PublishOptions) -> Result<()> {
     exists(&options.verdict)?;
     exists(&options.report)
 }

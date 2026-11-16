@@ -21,7 +21,7 @@ impl UnwallRepository {
     ///
     /// Returns [`Error::Load`] if the URL could not be fetched.
     #[instrument_database(operation = "SELECT", collection = "unwall_urls")]
-    pub async fn cached_url(&self, url: &str) -> Result<Option<CachedUrl>, Error> {
+    pub(crate) async fn cached_url(&self, url: &str) -> Result<Option<CachedUrl>, Error> {
         trace!("loading the cached unwall URL from database");
 
         sqlx::query_as(
@@ -42,7 +42,12 @@ impl UnwallRepository {
     ///
     /// Returns [`Error::Insert`] if the URL could not be inserted.
     #[instrument_database(operation = "INSERT", collection = "unwall_urls")]
-    pub async fn insert_url(&self, url: &str, host: &str, unwall_url: &str) -> Result<(), Error> {
+    pub(crate) async fn insert_url(
+        &self,
+        url: &str,
+        host: &str,
+        unwall_url: &str,
+    ) -> Result<(), Error> {
         trace!(url.domain = %host, "caching the unwalled URL in database");
 
         sqlx::query(
@@ -66,7 +71,7 @@ impl UnwallRepository {
     ///
     /// Returns [`Error::Insert`] if the fetch could not be inserted.
     #[instrument_database(operation = "INSERT", collection = "unwall_fetches")]
-    pub async fn record_fetch(&self, fetch: &NewFetch) -> Result<(), Error> {
+    pub(crate) async fn record_fetch(&self, fetch: &NewFetch) -> Result<(), Error> {
         trace!(
             url.domain = %fetch.host,
             irc.channel = %fetch.attribution.channel,
@@ -100,7 +105,7 @@ impl UnwallRepository {
     ///
     /// Returns [`Error::Load`] if the sites could not be fetched.
     #[instrument_database(operation = "SELECT", collection = "unwall_sites")]
-    pub async fn sites(&self) -> Result<Vec<Site>, Error> {
+    pub(crate) async fn sites(&self) -> Result<Vec<Site>, Error> {
         trace!("loading the unwalled sites from database");
 
         sqlx::query_as(
@@ -119,7 +124,7 @@ impl UnwallRepository {
     ///
     /// Returns [`Error::Insert`] if the site could not be inserted.
     #[instrument_database(operation = "INSERT", collection = "unwall_sites")]
-    pub async fn insert_site(&self, host: &str, nickname: &str) -> Result<(), Error> {
+    pub(crate) async fn insert_site(&self, host: &str, nickname: &str) -> Result<(), Error> {
         trace!(url.domain = %host, "adding the unwalled site to database");
 
         sqlx::query(
@@ -142,7 +147,7 @@ impl UnwallRepository {
     ///
     /// Returns [`Error::Delete`] if the sites could not be deleted.
     #[instrument_database(operation = "DELETE", collection = "unwall_sites")]
-    pub async fn delete_sites(&self, hosts: &[String]) -> Result<u64, Error> {
+    pub(crate) async fn delete_sites(&self, hosts: &[String]) -> Result<u64, Error> {
         trace!(
             unwall.site.count = hosts.len(),
             "removing the unwalled sites from database"
@@ -166,7 +171,7 @@ impl UnwallRepository {
         collection = "unwall_urls",
         summary = "SELECT unwall statistics"
     )]
-    pub async fn statistics(&self, today: NaiveDate) -> Result<Statistics, Error> {
+    pub(crate) async fn statistics(&self, today: NaiveDate) -> Result<Statistics, Error> {
         trace!(unwall.statistics.date = %today, "loading the unwall statistics from database");
 
         let (urls, urls_today, hosts, fetches, fetches_today, users): (
@@ -210,7 +215,7 @@ impl UnwallRepository {
         collection = "unwall_urls",
         summary = "SELECT unwall host statistics"
     )]
-    pub async fn host_statistics(
+    pub(crate) async fn host_statistics(
         &self,
         host: &str,
         today: NaiveDate,

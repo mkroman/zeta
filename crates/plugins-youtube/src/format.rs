@@ -76,7 +76,7 @@ fn sanitize_html(text: &str) -> String {
 }
 
 /// Formats the reply for the top video in a `.yt` search.
-pub fn search_reply(results: Vec<Search>) -> String {
+pub(crate) fn search_reply(results: Vec<Search>) -> String {
     results
         .into_iter()
         .find_map(|result| {
@@ -98,7 +98,7 @@ pub fn search_reply(results: Vec<Search>) -> String {
 }
 
 /// Formats a failed `.yt` search.
-pub fn search_error_reply(error: &Error) -> String {
+pub(crate) fn search_error_reply(error: &Error) -> String {
     const CONTEXT: &str = "could not search youtube";
 
     match error {
@@ -108,7 +108,7 @@ pub fn search_error_reply(error: &Error) -> String {
 }
 
 /// Formats a failed video lookup.
-pub fn video_error_reply(error: &Error) -> String {
+pub(crate) fn video_error_reply(error: &Error) -> String {
     const CONTEXT: &str = "could not look up the video";
 
     match error {
@@ -122,7 +122,7 @@ pub fn video_error_reply(error: &Error) -> String {
 /// Live and upcoming streams are described as live streams along with their category and
 /// current number of concurrent viewers (falling back to the total view count when
 /// unavailable), while regular videos include only their duration.
-pub fn format_video_message(video: &Video, category: &str, view_count: u64) -> String {
+pub(crate) fn format_video_message(video: &Video, category: &str, view_count: u64) -> String {
     let snippet = video.snippet.as_ref();
     let title = snippet.map_or_else(|| "‽".to_string(), |s| sanitize_html(&s.title));
     let channel_name = snippet.map_or_else(

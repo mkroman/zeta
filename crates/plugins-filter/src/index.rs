@@ -305,7 +305,7 @@ fn with_channel_key<R>(channel: &str, f: impl FnOnce(&str) -> R) -> R {
 /// holds the filters that apply to all channels. A lookup consults both, and never touches the
 /// filters of other channels.
 #[derive(Debug, Default, Clone)]
-pub struct FilterIndex {
+pub(crate) struct FilterIndex {
     /// The channel buckets, keyed by lowercased channel name.
     channels: IndexMap<String, HostIndex>,
     /// The filters that apply to all channels.

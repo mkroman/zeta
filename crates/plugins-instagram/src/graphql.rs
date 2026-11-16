@@ -40,7 +40,7 @@ const FRIENDLY_NAME: &str = "PolarisLoggedOutDesktopWWWPostRootContentQuery";
 ///
 /// They are stable across requests, so they are fetched once and reused for subsequent media.
 #[derive(Clone, Debug)]
-pub struct SessionTokens {
+pub(crate) struct SessionTokens {
     /// The LSD token embedded in the scripts of the front page.
     pub(crate) lsd: String,
     /// The CSRF token carried by the `csrftoken` cookie the front page sets, if any.
@@ -48,7 +48,7 @@ pub struct SessionTokens {
 }
 
 #[derive(thiserror::Error, Debug)]
-pub enum Error {
+pub(crate) enum Error {
     /// The request failed, or the response body could not be read.
     #[error(transparent)]
     Response(#[from] ResponseError),
@@ -107,7 +107,7 @@ struct User {
 /// # Errors
 ///
 /// Returns an error if the media is not anonymously accessible or the request fails.
-pub async fn fetch_media_details(
+pub(crate) async fn fetch_media_details(
     client: &wreq::Client,
     shortcode: &str,
     tokens: &SessionTokens,
@@ -129,7 +129,7 @@ pub async fn fetch_media_details(
 /// # Errors
 ///
 /// Returns an error if the front page could not be fetched or carried no LSD token.
-pub async fn fetch_session(
+pub(crate) async fn fetch_session(
     client: &wreq::Client,
     session_cookie: Option<&str>,
 ) -> Result<SessionTokens, Error> {

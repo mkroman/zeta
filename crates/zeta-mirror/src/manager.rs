@@ -73,7 +73,7 @@ const MAX_QUEUED_REQUESTS: usize = 64;
 
 /// Errors that can occur while mirroring a download request.
 #[derive(thiserror::Error, Debug)]
-pub enum Error {
+pub(crate) enum Error {
     /// A temporary download directory could not be created.
     #[error("could not create temporary directory: {0}")]
     TempDir(#[from] std::io::Error),
@@ -109,7 +109,7 @@ fn flatten_join<T>(
 }
 
 /// A request to download the media at `url` and mirror it to the bucket.
-pub struct DownloadRequest {
+pub(crate) struct DownloadRequest {
     /// The URL to download.
     pub url: String,
     /// The id the downloaded files are named after and the public link is built from.
@@ -161,7 +161,7 @@ const REQUEST_CHANNEL_CAPACITY: usize = MAX_QUEUED_REQUESTS + 1;
 
 /// A handle to the running download manager, used for submitting download requests.
 #[derive(Clone)]
-pub struct DownloadManager {
+pub(crate) struct DownloadManager {
     /// The channel on which download requests are submitted to the manager task.
     requests: mpsc::Sender<DownloadRequest>,
 }
@@ -190,7 +190,7 @@ impl DownloadManager {
     ///
     /// Panics if called outside of a tokio runtime.
     #[must_use]
-    pub fn start(
+    pub(crate) fn start(
         downloader: Arc<dyn Downloader>,
         s3: S3,
         download_dir: PathBuf,
@@ -245,7 +245,7 @@ impl DownloadManager {
     ///
     /// Returns the request back if the manager task is no longer running.
     #[allow(clippy::result_large_err)]
-    pub fn submit(&self, request: DownloadRequest) -> Result<(), DownloadRequest> {
+    pub(crate) fn submit(&self, request: DownloadRequest) -> Result<(), DownloadRequest> {
         match self.requests.try_send(request) {
             Ok(()) => Ok(()),
             Err(mpsc::error::TrySendError::Full(request)) => {

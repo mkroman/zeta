@@ -7,33 +7,33 @@
 use crate::time;
 
 /// Gating policy for exact, deterministic counts.
-pub struct Policy {
+pub(crate) struct Policy {
     /// A positive `Ir` delta below this many instructions is churn on trivial benches.
     pub floor: u64,
     /// Exact counts with a matched toolchain gate on any reproducible increase.
     pub limit: f64,
 }
 
-pub const POLICY: Policy = Policy {
+pub(crate) const POLICY: Policy = Policy {
     floor: 16,
     limit: 0.0,
 };
 
 /// Presentation limits, separate from the gating policy.
-pub struct ReportLimits {
+pub(crate) struct ReportLimits {
     pub stale_days: i64,
     pub max_chart_bars: usize,
     pub max_table_rows: usize,
 }
 
-pub const REPORT: ReportLimits = ReportLimits {
+pub(crate) const REPORT: ReportLimits = ReportLimits {
     stale_days: 7,
     max_chart_bars: 12,
     max_table_rows: 120,
 };
 
 /// Everything needed to describe, annotate and link one benchmark suite.
-pub struct Suite {
+pub(crate) struct Suite {
     pub name: &'static str,
     /// Source file regressions are annotated against.
     pub source: &'static str,
@@ -41,7 +41,7 @@ pub struct Suite {
     pub context: &'static str,
 }
 
-pub const SUITES: &[Suite] = &[
+pub(crate) const SUITES: &[Suite] = &[
     Suite {
         name: "join",
         source: "benchmarks/benches/join.rs",
@@ -65,7 +65,7 @@ pub const SUITES: &[Suite] = &[
 ];
 
 /// Optional display overrides; functions not listed are humanized from their Rust names.
-pub const DISPLAY: &[(&str, &str)] = &[
+pub(crate) const DISPLAY: &[(&str, &str)] = &[
     ("bench_std_join", "std join (baseline)"),
     ("bench_parse_iso8601", "parse_iso8601_duration"),
     (
@@ -87,21 +87,21 @@ pub const DISPLAY: &[(&str, &str)] = &[
 /// Within-run comparison groups: suite name and the reference benchmark. Other benchmarks in
 /// the suite that use the same set of case ids are compared against the reference
 /// automatically. Informational only, never gated.
-pub const COMPARISONS: &[(&str, &str)] = &[
+pub(crate) const COMPARISONS: &[(&str, &str)] = &[
     ("join", "bench_std_join"),
     ("duration", "bench_distance_in_words_chrono"),
 ];
 
 /// The metric a waiver applies to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Metric {
+pub(crate) enum Metric {
     Ir,
     Blocks,
     Bytes,
 }
 
 impl Metric {
-    pub const fn name(self) -> &'static str {
+    pub(crate) const fn name(self) -> &'static str {
         match self {
             Self::Ir => "Ir",
             Self::Blocks => "TotalBlocks",
@@ -111,7 +111,7 @@ impl Metric {
 }
 
 /// An accepted regression, recorded with a reason and optional expiry.
-pub struct Waiver {
+pub(crate) struct Waiver {
     pub benchmark: &'static str,
     pub case: Option<&'static str>,
     pub metric: Metric,
@@ -122,7 +122,7 @@ pub struct Waiver {
 
 /// Accepted regressions. Add an entry in the pull request that accepts the regression so the
 /// trade-off is reviewed and stays visible in the report.
-pub const WAIVERS: &[Waiver] = &[
+pub(crate) const WAIVERS: &[Waiver] = &[
     Waiver {
         benchmark: "bench_pipeline",
         case: Some("url"),
@@ -142,20 +142,20 @@ pub const WAIVERS: &[Waiver] = &[
 ];
 
 impl Waiver {
-    pub fn expired(&self) -> bool {
+    pub(crate) fn expired(&self) -> bool {
         self.expires
             .and_then(time::parse_date)
             .is_some_and(|expiry| expiry < time::today())
     }
 
-    pub fn matches(&self, benchmark: &str, case: Option<&str>, metric: Metric) -> bool {
+    pub(crate) fn matches(&self, benchmark: &str, case: Option<&str>, metric: Metric) -> bool {
         self.benchmark == benchmark
             && self.metric == metric
             && self.case.is_none_or(|configured| Some(configured) == case)
             && !self.expired()
     }
 
-    pub fn describe(&self) -> String {
+    pub(crate) fn describe(&self) -> String {
         self.expires.map_or_else(
             || self.reason.to_owned(),
             |expires| format!("{} (expires {expires})", self.reason),
@@ -165,18 +165,18 @@ impl Waiver {
 
 /// Turn a Rust benchmark function name into a readable label.
 #[must_use]
-pub fn humanize(function: &str) -> String {
+pub(crate) fn humanize(function: &str) -> String {
     function.trim_prefix("bench_").replace('_', " ")
 }
 
 /// Turn a benchmark case id into a readable label.
 #[must_use]
-pub fn humanize_case(case: &str) -> String {
+pub(crate) fn humanize_case(case: &str) -> String {
     case.replace('_', " ")
 }
 
 #[must_use]
-pub fn display_name(function: &str) -> String {
+pub(crate) fn display_name(function: &str) -> String {
     DISPLAY
         .iter()
         .find_map(|(name, display)| (*name == function).then(|| (*display).to_owned()))
@@ -184,7 +184,7 @@ pub fn display_name(function: &str) -> String {
 }
 
 #[must_use]
-pub fn label(function: &str, case: Option<&str>) -> String {
+pub(crate) fn label(function: &str, case: Option<&str>) -> String {
     let name = display_name(function);
     match case {
         Some(case) => format!("{name} · {}", humanize_case(case)),
@@ -193,17 +193,17 @@ pub fn label(function: &str, case: Option<&str>) -> String {
 }
 
 #[must_use]
-pub fn suite(name: &str) -> Option<&'static Suite> {
+pub(crate) fn suite(name: &str) -> Option<&'static Suite> {
     SUITES.iter().find(|suite| suite.name == name)
 }
 
 #[must_use]
-pub fn suite_display(name: &str) -> String {
+pub(crate) fn suite_display(name: &str) -> String {
     name.to_owned()
 }
 
 #[must_use]
-pub fn suite_source(name: &str) -> String {
+pub(crate) fn suite_source(name: &str) -> String {
     suite(name).map_or_else(
         || format!("benchmarks/benches/{name}.rs"),
         |suite| suite.source.to_owned(),
@@ -211,6 +211,6 @@ pub fn suite_source(name: &str) -> String {
 }
 
 #[must_use]
-pub fn suite_context(name: &str) -> String {
+pub(crate) fn suite_context(name: &str) -> String {
     suite(name).map_or_else(|| format!("bench/{name}"), |suite| suite.context.to_owned())
 }

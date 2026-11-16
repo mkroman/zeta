@@ -2,37 +2,37 @@ use std::time::Duration;
 
 /// The default value for the minimum number of connections the database connection pool should
 /// maintain at all times.
-pub const DEFAULT_MIN_DB_CONNECTIONS: u32 = 1;
+pub(crate) const DEFAULT_MIN_DB_CONNECTIONS: u32 = 1;
 
 /// The default value for the maximum number of connections the database connection pool will keep
 /// open at once.
-pub const DEFAULT_MAX_DB_CONNECTIONS: u32 = 5;
+pub(crate) const DEFAULT_MAX_DB_CONNECTIONS: u32 = 5;
 
 /// The default value for the duration the connection pool will keep an idle connection open.
-pub const DEFAULT_DB_IDLE_TIMEOUT: Duration = Duration::from_mins(5);
+pub(crate) const DEFAULT_DB_IDLE_TIMEOUT: Duration = Duration::from_mins(5);
 
 /// The default value for the maximum lifetime of database pool connections before they are reaped.
-pub const DEFAULT_DB_MAX_LIFETIME: Duration = Duration::from_hours(24);
+pub(crate) const DEFAULT_DB_MAX_LIFETIME: Duration = Duration::from_hours(24);
 
 /// The port number to use for plain, unencrypted IRC connections when not otherwise specified.
-pub const DEFAULT_IRC_PORT: u16 = 6667;
+pub(crate) const DEFAULT_IRC_PORT: u16 = 6667;
 
 /// The port number to use for secure IRC connections when not otherwise specified.
-pub const DEFAULT_IRC_TLS_PORT: u16 = 6697;
+pub(crate) const DEFAULT_IRC_TLS_PORT: u16 = 6697;
 
 /// The duration after a shutdown signal within which the plugin tasks are expected to finish
 /// their queued messages and shutdown hooks, before they are aborted.
-pub const SHUTDOWN_GRACE: Duration = Duration::from_secs(10);
+pub(crate) const SHUTDOWN_GRACE: Duration = Duration::from_secs(10);
 
 /// The duration to wait for every plugin's `loaded` hook before dispatching incoming messages.
 ///
 /// Dispatching before the hooks finish would let handlers run against state they are still
 /// building — the filter index, caches, catalog entries. The grace bounds a hook that stalls: the
 /// bot then dispatches with whatever loaded instead of never connecting.
-pub const STARTUP_GRACE: Duration = Duration::from_secs(15);
+pub(crate) const STARTUP_GRACE: Duration = Duration::from_secs(15);
 
 /// How long to wait for the outgoing task to flush the `QUIT` message before giving up.
-pub const QUIT_FLUSH_DELAY: Duration = Duration::from_millis(500);
+pub(crate) const QUIT_FLUSH_DELAY: Duration = Duration::from_millis(500);
 
 /// The default `QUIT` message sent when the bot shuts down.
-pub const DEFAULT_SHUTDOWN_QUIT_MESSAGE: &str = "shutting down";
+pub(crate) const DEFAULT_SHUTDOWN_QUIT_MESSAGE: &str = "shutting down";

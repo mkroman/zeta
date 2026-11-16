@@ -11,7 +11,7 @@ use crate::json::{Object, Value};
 
 /// Build the verdict document for `run`.
 #[must_use]
-pub fn verdict(run: &RunSummary) -> Value {
+pub(crate) fn verdict(run: &RunSummary) -> Value {
     let verdict = policy::verdict(run);
     let counts = policy::counts(&run.benchmarks);
     let count_map: Object = Tier::ALL

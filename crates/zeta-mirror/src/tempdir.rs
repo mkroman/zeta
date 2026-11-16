@@ -9,7 +9,7 @@ use std::time::Duration;
 use tracing::warn;
 
 /// The filename prefix for our temporary download directories.
-pub const TEMP_DIR_PREFIX: &str = "zeta-mirror-";
+pub(crate) const TEMP_DIR_PREFIX: &str = "zeta-mirror-";
 
 /// The maximum age of a download directory before it is considered stale during the sweep of the
 /// shared system temporary directory.
@@ -17,13 +17,13 @@ pub const TEMP_DIR_PREFIX: &str = "zeta-mirror-";
 /// The system temporary directory may hold the active download directories of other running
 /// processes (including other instances of the bot), so only directories that have not been
 /// touched recently are removed there.
-pub const STALE_DOWNLOAD_MAX_AGE: Duration = Duration::from_hours(24);
+pub(crate) const STALE_DOWNLOAD_MAX_AGE: Duration = Duration::from_hours(24);
 
 /// Returns a builder for our temporary download directories.
 ///
 /// Directories are private to the current user on unix, since downloaded media may be sensitive.
 #[must_use]
-pub fn tempdir_builder() -> tempfile::Builder<'static, 'static> {
+pub(crate) fn tempdir_builder() -> tempfile::Builder<'static, 'static> {
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
 
@@ -43,7 +43,7 @@ pub fn tempdir_builder() -> tempfile::Builder<'static, 'static> {
 /// modification time is older are removed; use it when sweeping a directory that may hold the
 /// active download directories of other running processes (the system temporary directory). Left
 /// `None` for directories owned by this process.
-pub fn cleanup_stale_downloads(base: &std::path::Path, max_age: Option<Duration>) -> usize {
+pub(crate) fn cleanup_stale_downloads(base: &std::path::Path, max_age: Option<Duration>) -> usize {
     let Ok(entries) = std::fs::read_dir(base) else {
         return 0;
     };
@@ -75,7 +75,7 @@ pub fn cleanup_stale_downloads(base: &std::path::Path, max_age: Option<Duration>
 }
 
 /// Whether `entry` is a temporary download directory left by a mirror download.
-pub fn is_temp_download_dir(entry: &std::fs::DirEntry) -> bool {
+pub(crate) fn is_temp_download_dir(entry: &std::fs::DirEntry) -> bool {
     entry
         .file_name()
         .to_string_lossy()

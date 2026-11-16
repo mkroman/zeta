@@ -31,7 +31,7 @@ use crate::dispatch::CommandRoute;
 /// spans cannot disagree about one line. Command, operation and channel come from the line's
 /// route, already classified by the dispatcher; the IRCv3 message id is read from the message.
 #[derive(Clone, Copy, Debug)]
-pub struct MessageTelemetry<'a> {
+pub(crate) struct MessageTelemetry<'a> {
     /// The IRC command as received, recorded as `irc.command` — `PRIVMSG`, `NOTICE`, `JOIN`, …
     /// and the received name for a raw command.
     pub(crate) command: &'a str,
@@ -72,7 +72,7 @@ impl<'a> MessageTelemetry<'a> {
 /// `zeta.plugins`, like the handler spans, so one filter decision enables the whole message
 /// trace. Its fields come from [`MessageTelemetry`], so the two spans cannot disagree about the
 /// command, operation, destination or message id.
-pub fn dispatch_span(telemetry: &MessageTelemetry<'_>) -> Span {
+pub(crate) fn dispatch_span(telemetry: &MessageTelemetry<'_>) -> Span {
     let span = tracing::info_span!(
         target: "zeta.plugins",
         "irc.dispatch",
@@ -105,7 +105,7 @@ pub fn dispatch_span(telemetry: &MessageTelemetry<'_>) -> Span {
 /// once per line that may deliver, before the span is built and before routing shares the
 /// message, and passes the result to every delivery point.
 #[must_use]
-pub fn handler_spans_enabled() -> bool {
+pub(crate) fn handler_spans_enabled() -> bool {
     tracing::enabled!(target: "zeta.plugins", tracing::Level::INFO)
 }
 

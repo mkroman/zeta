@@ -7,13 +7,13 @@ use std::time::SystemTime;
 
 /// Today, expressed as days since the Unix epoch (UTC).
 #[must_use]
-pub fn today() -> i64 {
+pub(crate) fn today() -> i64 {
     unix_now() / 86_400
 }
 
 /// Seconds since the Unix epoch, saturating rather than failing before 1970.
 #[must_use]
-pub fn unix_now() -> i64 {
+pub(crate) fn unix_now() -> i64 {
     SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .map_or(0, |duration| {
@@ -22,7 +22,7 @@ pub fn unix_now() -> i64 {
 }
 
 /// Parse a `YYYY-MM-DD` date into days since the Unix epoch.
-pub fn parse_date(value: &str) -> Option<i64> {
+pub(crate) fn parse_date(value: &str) -> Option<i64> {
     let mut parts = value.split('-');
     let year = parts.next()?.parse::<i32>().ok()?;
     let month = parts.next()?.parse::<u32>().ok()?;

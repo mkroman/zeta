@@ -11,7 +11,7 @@ use crate::model::{Criteria, NewFilter, is_wildcard};
 
 /// Manage URL and sender filters.
 #[derive(Parser, Debug)]
-pub struct Opts {
+pub(crate) struct Opts {
     /// the filter operation
     #[command(subcommand)]
     pub(super) command: Subcommand,
@@ -19,7 +19,7 @@ pub struct Opts {
 
 /// The `.filter` subcommands.
 #[derive(clap::Subcommand, Debug)]
-pub enum Subcommand {
+pub(crate) enum Subcommand {
     /// add a new filter
     Add(Add),
     /// list filters matching criteria
@@ -30,7 +30,7 @@ pub enum Subcommand {
 
 /// The sender patterns `add`, `list` and `delete` share.
 #[derive(clap::Args, Debug, Default)]
-pub struct SenderArgs {
+pub(crate) struct SenderArgs {
     /// sender nickname pattern, e.g. `*bot`
     #[arg(long)]
     pub(super) nick: Option<String>,
@@ -61,7 +61,7 @@ pub struct CriteriaArgs {
 
 /// Add a new filter.
 #[derive(clap::Args, Debug)]
-pub struct Add {
+pub(crate) struct Add {
     /// only apply the filter in this channel (defaults to the current channel)
     #[arg(long)]
     pub(super) channel: Option<String>,
@@ -81,7 +81,7 @@ pub struct Add {
 
 /// List filters.
 #[derive(clap::Args, Debug)]
-pub struct List {
+pub(crate) struct List {
     /// the criteria to match
     #[command(flatten)]
     pub(super) criteria: CriteriaArgs,
@@ -89,7 +89,7 @@ pub struct List {
 
 /// Delete filters.
 #[derive(clap::Args, Debug)]
-pub struct Delete {
+pub(crate) struct Delete {
     /// the id of a single filter to remove
     pub(super) id: Option<i32>,
     /// the criteria to match

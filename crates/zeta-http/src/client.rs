@@ -28,7 +28,7 @@ use crate::{BoxFuture, RequestError, RequestFailure};
 /// alone it would be dead weight, so it is not compiled there.
 #[cfg(feature = "http")]
 #[derive(Clone, Debug)]
-pub struct ClientSpan(pub(crate) Span);
+pub(crate) struct ClientSpan(pub(crate) Span);
 
 /// Sends `request` inside an `http.client` span and returns the response.
 ///

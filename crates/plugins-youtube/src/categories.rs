@@ -16,7 +16,7 @@ use super::YouTube;
 use super::api::fetch_video_categories;
 
 /// The time-to-live of the cached video categories.
-pub const CATEGORIES_TTL: Duration = Duration::from_hours(24);
+pub(crate) const CATEGORIES_TTL: Duration = Duration::from_hours(24);
 
 /// How often the categories task rechecks the cache for staleness.
 ///

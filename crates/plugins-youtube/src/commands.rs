@@ -14,7 +14,7 @@ use super::{UrlKind, YouTube, parse_youtube_url};
 ///
 /// An invocation whose arguments are themselves a YouTube URL resolves it as a link instead of
 /// searching for it as a query, so the two event kinds do not double up.
-pub async fn search_video(
+pub(crate) async fn search_video(
     plugin: &YouTube,
     client: &Client,
     command: &CommandEvent,
@@ -40,7 +40,7 @@ pub async fn search_video(
 }
 
 /// Replies to a posted YouTube video link with the video's details.
-pub async fn handle_url(
+pub(crate) async fn handle_url(
     plugin: &YouTube,
     client: &Client,
     url: &UrlEvent,

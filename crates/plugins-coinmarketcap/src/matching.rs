@@ -16,7 +16,7 @@ use strsim::jaro_winkler;
 /// Lower-casing and counting happen once when the coin cache is built, so scoring a candidate
 /// does not allocate.
 #[derive(Debug)]
-pub struct NamedCoin {
+pub(crate) struct NamedCoin {
     /// The CoinMarketCap id of the coin, returned for the best match.
     id: u64,
     /// The coin's name, lower-cased for comparison with the lower-cased query.
@@ -31,7 +31,7 @@ pub struct NamedCoin {
 
 impl NamedCoin {
     /// Prepares `coin` for fuzzy matching.
-    pub fn new(coin: &Coin) -> Self {
+    pub(crate) fn new(coin: &Coin) -> Self {
         let name = coin.name.to_lowercase();
 
         Self {
@@ -51,7 +51,7 @@ impl NamedCoin {
 /// (exact match first, then prefix, then substring); the rest are scored by Jaro-Winkler
 /// similarity, scaled below verbatim matches. The highest score wins, preferring the shorter
 /// name on ties (e.g. `Bitcoin` over `Bitcoin Cash` for the query `bitcoin`).
-pub fn find_by_name(coins: &[NamedCoin], query: &str, max_name_typos: u16) -> Option<u64> {
+pub(crate) fn find_by_name(coins: &[NamedCoin], query: &str, max_name_typos: u16) -> Option<u64> {
     let needle = query.trim().to_lowercase();
 
     if needle.is_empty() {

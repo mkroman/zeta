@@ -27,17 +27,17 @@ use zeta_utils::irc;
 ///
 /// It updates about once an hour: fiat rates sourced from the European Central Bank, and
 /// Bitcoin network and price properties sourced from blockchain.info.
-pub const CURRENCY_URL: &str = "https://rinkcalc.app/data/currency.json";
+pub(crate) const CURRENCY_URL: &str = "https://rinkcalc.app/data/currency.json";
 
 /// The time-to-live of the fetched currency data, matching the dataset's update cadence.
-pub const CURRENCY_TTL: Duration = Duration::from_hours(1);
+pub(crate) const CURRENCY_TTL: Duration = Duration::from_hours(1);
 
 /// How often the currency task rechecks the cache for staleness.
 ///
 /// A tick only fetches when the cached entry is missing or past its TTL, so the actual fetches
 /// happen at most once per [`CURRENCY_TTL`]; the shorter check interval makes a failed fetch
 /// retry within minutes instead of after a full TTL.
-pub const CURRENCY_CHECK_INTERVAL: Duration = Duration::from_mins(10);
+pub(crate) const CURRENCY_CHECK_INTERVAL: Duration = Duration::from_mins(10);
 
 /// The number of top cryptocurrencies (by market cap) fetched for the money unit table.
 ///
@@ -55,7 +55,7 @@ const CRYPTO_SUBUNIT_NAMES: &[&str] = &[
 /// The dataset the current rink context was built from: rink's fiat dataset and, when the
 /// coinmarketcap plugin shared its client, the cryptocurrency listing table.
 #[derive(Clone)]
-pub struct CurrencyData {
+pub(crate) struct CurrencyData {
     /// The body of rink's live currency dataset.
     pub fiat: String,
     /// The ranked cryptocurrency listings, when the coinmarketcap plugin is available.
@@ -73,7 +73,7 @@ pub struct CurrencyData {
 ///
 /// The cryptocurrency subunits reference the live coin units, so they stay pending until the
 /// listing containing each coin is loaded.
-pub const EXTRA_UNITS: &str = r#"
+pub(crate) const EXTRA_UNITS: &str = r#"
 !category css                                "CSS Units"
 
 ?? The CSS reference pixel, defined by CSS Values and Units Level 3 as
@@ -155,7 +155,7 @@ litoshi                  1e-8 LTC
 ///
 /// Returns a [`ZetaError`] when the fiat fetch fails, the response carries an error status, or
 /// the actor cannot rebuild the context from the fetched data.
-pub async fn refresh_data(
+pub(crate) async fn refresh_data(
     client: &reqwest::Client,
     currency: &zeta_cache::TtlCache<CurrencyData>,
     cmc: Option<&CmcClient>,
@@ -178,7 +178,7 @@ pub async fn refresh_data(
 /// # Errors
 ///
 /// Returns a [`ZetaError`] when the context cannot be rebuilt from `data`.
-pub fn swap_in(ctx: &mut RinkContext, data: &CurrencyData) -> Result<(), ZetaError> {
+pub(crate) fn swap_in(ctx: &mut RinkContext, data: &CurrencyData) -> Result<(), ZetaError> {
     let previous = ctx.previous_result.clone();
     let next = build_context(Some(data), previous)?;
 
@@ -238,7 +238,7 @@ async fn fetch_fiat(client: &reqwest::Client, url: &str) -> Result<String, ZetaE
 ///
 /// Returns a [`ZetaError`] when the bundled dataset, the currency data, or the extra
 /// definitions cannot be loaded.
-pub fn build_context(
+pub(crate) fn build_context(
     data: Option<&CurrencyData>,
     previous: Option<Value>,
 ) -> Result<RinkContext, ZetaError> {

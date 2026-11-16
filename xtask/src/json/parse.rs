@@ -9,7 +9,7 @@ use super::{Error, Object, Value};
 const MAX_DEPTH: usize = 128;
 
 /// Parse one JSON document.
-pub fn parse(text: &str) -> Result<Value, Error> {
+pub(crate) fn parse(text: &str) -> Result<Value, Error> {
     let mut parser = Parser {
         bytes: text.as_bytes(),
         index: 0,

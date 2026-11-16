@@ -64,7 +64,7 @@ pub struct YouTubeRecord {
 /// A URL record to be inserted into the database.
 #[derive(Debug)]
 #[allow(dead_code)]
-pub struct InsertUrlRecord {
+pub(crate) struct InsertUrlRecord {
     /// The scheme of the posted URL.
     pub scheme: String,
     /// The host of the posted URL.
@@ -86,7 +86,7 @@ pub struct InsertUrlRecord {
 /// A YouTube video record to be inserted into the database.
 #[derive(Debug)]
 #[allow(dead_code)]
-pub struct InsertYouTubeRecord {
+pub(crate) struct InsertYouTubeRecord {
     /// The video id of the posted YouTube video.
     pub video_id: String,
     /// The user who posted the video, and the channel it was posted in.

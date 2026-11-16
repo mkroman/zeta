@@ -40,7 +40,7 @@ const CURL_HINT: &str = "curl is required to fetch the UCD files; install curl";
 ///
 /// Returns an error for invalid versions, a destination that already contains trainer inputs,
 /// a missing `curl`, a failed download, or files whose release headers do not match.
-pub fn run(args: &FetchUcdArgs) -> Result<()> {
+pub(crate) fn run(args: &FetchUcdArgs) -> Result<()> {
     let curl = resolve_curl()?;
     execute(args, |url, path| curl_fetch(&curl, url, path))
 }

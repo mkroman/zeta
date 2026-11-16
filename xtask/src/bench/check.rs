@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::bench::config::{self, Metric, Waiver};
 use crate::bench::model::{Benchmark, Inventory};
 
-pub struct CheckResult {
+pub(crate) struct CheckResult {
     pub benchmarks: usize,
     pub suites: usize,
     pub errors: Vec<String>,
@@ -19,14 +19,14 @@ pub struct CheckResult {
 
 impl CheckResult {
     #[must_use]
-    pub const fn ok(&self) -> bool {
+    pub(crate) const fn ok(&self) -> bool {
         self.errors.is_empty()
     }
 }
 
 #[must_use]
 #[allow(clippy::too_many_lines)]
-pub fn check(benchmarks: &[Benchmark], waivers: &[Waiver]) -> CheckResult {
+pub(crate) fn check(benchmarks: &[Benchmark], waivers: &[Waiver]) -> CheckResult {
     let inventory = Inventory::build(benchmarks);
     let mut result = CheckResult {
         benchmarks: benchmarks.len(),
@@ -136,7 +136,7 @@ pub fn check(benchmarks: &[Benchmark], waivers: &[Waiver]) -> CheckResult {
 }
 
 #[must_use]
-pub fn format_result(result: &CheckResult, source: &str) -> String {
+pub(crate) fn format_result(result: &CheckResult, source: &str) -> String {
     let suite_word = if result.suites == 1 {
         "suite"
     } else {

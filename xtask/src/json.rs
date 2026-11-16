@@ -14,16 +14,16 @@ mod write;
 use std::collections::BTreeMap;
 use std::fmt;
 
-pub use parse::parse;
-pub use write::{to_string, to_string_pretty};
+pub(crate) use parse::parse;
+pub(crate) use write::{to_string, to_string_pretty};
 
 /// A JSON object. A map keeps keys deterministic and sorted, matching the payloads the
 /// previous serializer produced.
-pub type Object = BTreeMap<String, Value>;
+pub(crate) type Object = BTreeMap<String, Value>;
 
 /// A parsed or constructed JSON value.
 #[derive(Clone, Debug, PartialEq)]
-pub enum Value {
+pub(crate) enum Value {
     Null,
     Bool(bool),
     U64(u64),
@@ -36,7 +36,7 @@ pub enum Value {
 
 impl Value {
     /// Build an object from key-value pairs.
-    pub fn object<K, I>(entries: I) -> Self
+    pub(crate) fn object<K, I>(entries: I) -> Self
     where
         K: Into<String>,
         I: IntoIterator<Item = (K, Self)>,
@@ -50,13 +50,13 @@ impl Value {
     }
 
     /// Build an array from values.
-    pub fn array<I: IntoIterator<Item = Self>>(items: I) -> Self {
+    pub(crate) fn array<I: IntoIterator<Item = Self>>(items: I) -> Self {
         Self::Array(items.into_iter().collect())
     }
 
     /// Look up a member of an object.
     #[must_use]
-    pub fn get(&self, key: &str) -> Option<&Self> {
+    pub(crate) fn get(&self, key: &str) -> Option<&Self> {
         match self {
             Self::Object(object) => object.get(key),
             _ => None,
@@ -64,14 +64,14 @@ impl Value {
     }
 
     /// Insert a member into an object; other values are left unchanged.
-    pub fn insert(&mut self, key: impl Into<String>, value: impl Into<Self>) {
+    pub(crate) fn insert(&mut self, key: impl Into<String>, value: impl Into<Self>) {
         if let Self::Object(object) = self {
             object.insert(key.into(), value.into());
         }
     }
 
     #[must_use]
-    pub fn as_str(&self) -> Option<&str> {
+    pub(crate) fn as_str(&self) -> Option<&str> {
         match self {
             Self::String(value) => Some(value),
             _ => None,
@@ -79,7 +79,7 @@ impl Value {
     }
 
     #[must_use]
-    pub fn as_u64(&self) -> Option<u64> {
+    pub(crate) fn as_u64(&self) -> Option<u64> {
         match self {
             Self::U64(value) => Some(*value),
             Self::I64(value) => u64::try_from(*value).ok(),
@@ -88,7 +88,7 @@ impl Value {
     }
 
     #[must_use]
-    pub fn as_array(&self) -> Option<&[Self]> {
+    pub(crate) fn as_array(&self) -> Option<&[Self]> {
         match self {
             Self::Array(values) => Some(values),
             _ => None,
@@ -96,7 +96,7 @@ impl Value {
     }
 
     #[must_use]
-    pub const fn as_object(&self) -> Option<&Object> {
+    pub(crate) const fn as_object(&self) -> Option<&Object> {
         match self {
             Self::Object(object) => Some(object),
             _ => None,

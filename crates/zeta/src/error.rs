@@ -3,10 +3,10 @@
 use miette::Diagnostic;
 use thiserror::Error;
 
-pub use irc::error::Error as IrcError;
+pub(crate) use irc::error::Error as IrcError;
 
 #[cfg(feature = "database")]
-pub use sqlx::{Error as SqlxError, migrate::MigrateError as SqlxMigrateError};
+pub(crate) use sqlx::{Error as SqlxError, migrate::MigrateError as SqlxMigrateError};
 
 /// Application errors for database, IRC, and plugin operations.
 #[derive(Error, Debug, Diagnostic)]

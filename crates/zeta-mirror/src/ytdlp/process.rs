@@ -41,7 +41,7 @@ impl YtDlp {
     ///
     /// Returns an error if `yt-dlp` could not be spawned, exits with a failure, times out or
     /// produces output that can't be parsed.
-    pub async fn download_with_progress(
+    pub(crate) async fn download_with_progress(
         &self,
         url: &str,
         id: &str,

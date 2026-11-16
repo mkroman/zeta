@@ -152,6 +152,9 @@ cognitive_complexity = "allow"
 # Require the `foo.rs` + `foo/bar.rs` module layout instead of `foo/mod.rs`. Named lints sit
 # below the groups by default, so the explicit priority is needed for this one to apply.
 mod_module_files = { level = "warn", priority = 2 }
+# `pub(crate)` is the right visibility for an item that is used across modules but is not part of
+# the crate's API; this lint asks for `pub` instead, which rustc's `unreachable_pub` rejects.
+redundant_pub_crate = { level = "allow", priority = 2 }
 
 [workspace.lints.rust]
 # Completely disallow unsafe code - no unsafe blocks, functions, or traits

@@ -7,7 +7,7 @@ use time::{
 
 /// Detailed information about a specific place.
 #[derive(Debug, Deserialize)]
-pub struct PlaceDetails {
+pub(crate) struct PlaceDetails {
     pub(super) name: String,
     opening_hours: Option<OpeningHours>,
     /// The offset from UTC in minutes.
@@ -137,7 +137,7 @@ fn parse_hhmm(s: &str) -> Option<Time> {
 }
 
 /// Formats a `Time` as "HH:MM".
-pub fn format_time(time: Time) -> String {
+pub(crate) fn format_time(time: Time) -> String {
     format!("{:02}:{:02}", time.hour(), time.minute())
 }
 

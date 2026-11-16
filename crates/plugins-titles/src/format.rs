@@ -19,7 +19,11 @@ const CONTENT_SEPARATOR: &str = " — ";
 ///
 /// Returns [`None`] when the page has neither a title nor OpenGraph metadata worth posting.
 #[must_use]
-pub fn format_page(metadata: &PageMetadata, url: &Url, settings: &Settings) -> Option<String> {
+pub(crate) fn format_page(
+    metadata: &PageMetadata,
+    url: &Url,
+    settings: &Settings,
+) -> Option<String> {
     let title = metadata
         .title
         .as_deref()

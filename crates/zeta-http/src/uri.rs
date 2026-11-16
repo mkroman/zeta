@@ -12,12 +12,12 @@ use std::fmt;
 /// field is recorded, so this wrapper writes the URI's scheme, host, non-default port and path
 /// directly from its components, without `Uri::to_string` or a URL parse.
 #[derive(Clone, Copy)]
-pub struct RedactedUriRef<'a>(&'a http::Uri);
+pub(crate) struct RedactedUriRef<'a>(&'a http::Uri);
 
 impl<'a> RedactedUriRef<'a> {
     /// Returns `uri` as it may be logged: without its query string or userinfo.
     #[must_use]
-    pub const fn from_uri(uri: &'a http::Uri) -> Self {
+    pub(crate) const fn from_uri(uri: &'a http::Uri) -> Self {
         Self(uri)
     }
 }

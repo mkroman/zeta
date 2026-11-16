@@ -28,7 +28,7 @@ use crate::error::{Error, Result};
 use crate::json::{self, Value};
 
 /// Run one parsed benchmark task.
-pub fn run(command: BenchCommand) -> Result<()> {
+pub(crate) fn run(command: BenchCommand) -> Result<()> {
     match command {
         BenchCommand::Metadata(args) => metadata(&args),
         BenchCommand::CheckConfig(args) => check_config(&args),

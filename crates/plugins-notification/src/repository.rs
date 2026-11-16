@@ -20,7 +20,7 @@ impl NotificationRepository {
     ///
     /// Returns [`Error::Load`] if the notifications could not be fetched.
     #[instrument_database(operation = "SELECT", collection = "notifications")]
-    pub async fn list(&self) -> Result<Vec<Notification>, Error> {
+    pub(crate) async fn list(&self) -> Result<Vec<Notification>, Error> {
         trace!("loading notifications from database");
 
         sqlx::query_as(
@@ -38,7 +38,10 @@ impl NotificationRepository {
     ///
     /// Returns [`Error::Insert`] if the notification could not be inserted.
     #[instrument_database(operation = "INSERT", collection = "notifications")]
-    pub async fn insert(&self, notification: NewNotification) -> Result<Notification, Error> {
+    pub(crate) async fn insert(
+        &self,
+        notification: NewNotification,
+    ) -> Result<Notification, Error> {
         trace!("inserting notification into database");
 
         sqlx::query_as(
@@ -65,7 +68,7 @@ impl NotificationRepository {
     ///
     /// Returns [`Error::Delete`] if the notifications could not be deleted.
     #[instrument_database(operation = "DELETE", collection = "notifications")]
-    pub async fn delete_ids(&self, ids: &[i32]) -> Result<u64, Error> {
+    pub(crate) async fn delete_ids(&self, ids: &[i32]) -> Result<u64, Error> {
         trace!(notification.ids = ?ids, "deleting notifications from database");
 
         zeta_plugin::database::delete_ids(&self.db, "notifications", ids)
