@@ -11,32 +11,24 @@
 //! `[plugins.spotify]`, falling back to the `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET`
 //! environment variables, with the token cached and refreshed by the shared `TokenCache`.
 //! Missing credentials fail plugin initialization and the plugin is skipped at startup.
+//!
+//! The module is split by concern: `commands` fetches a resource and renders its reply, `token`
+//! builds the client-credentials token request, and `urls` recognizes links and bare URIs. This
+//! module holds the plugin, its settings, and the event routing.
 
-use std::fmt::Write;
-
-use base64::prelude::*;
 use serde::{Deserialize, Serialize};
-use tracing::{debug, warn};
-use url::Url;
 
 use zeta_http as http;
 use zeta_http::oauth::Credentials;
-use zeta_http::reqwest;
-use zeta_http::reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
-use zeta_plugin::irc;
-use zeta_plugin::irc::{labeled_reply, send_reply};
 use zeta_plugin::{Client, Context, MessageEvent, UrlEvent, ZetaError, plugin, resolve_secret};
-use zeta_utils::text::{self, ListJoinExt, format_number};
 
+mod commands;
 mod model;
+mod token;
+mod urls;
 
-use self::model::{Album, Artist, ArtistSimple, Playlist, Track};
-
-/// The Spotify hosts whose links this plugin handles.
-const URL_HOSTS: &[&str] = &["open.spotify.com", "play.spotify.com"];
-
-const AUTH_URL: &str = "https://accounts.spotify.com/api/token";
-const API_BASE_URL: &str = "https://api.spotify.com/v1";
+#[cfg(test)]
+mod tests;
 
 /// Settings for the spotify plugin, from its `[plugins.spotify]` configuration section.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -64,7 +56,7 @@ pub type Error = http::ApiError;
 #[plugin(
     name = "spotify",
     settings = Settings,
-    urls(hosts = URL_HOSTS),
+    urls(hosts = urls::URL_HOSTS),
     messages
 )]
 impl Spotify {
@@ -73,7 +65,7 @@ impl Spotify {
         let client_secret =
             resolve_secret(settings.client_secret.as_deref(), "SPOTIFY_CLIENT_SECRET")?;
         let client = ctx.http().clone();
-        let credentials = Credentials::new(client, AUTH_URL, client_id, client_secret);
+        let credentials = Credentials::new(client, token::AUTH_URL, client_id, client_secret);
 
         Ok(Self { credentials })
     }
@@ -89,7 +81,7 @@ impl Spotify {
 
         // Handle Spotify URLs (open.spotify.com/type/id); do not include an external URL for
         // link matches, avoiding redundancy.
-        if let Some((type_str, id_str)) = parse_spotify_url(url.url()) {
+        if let Some((type_str, id_str)) = urls::parse_spotify_url(url.url()) {
             self.handle_spotify_resource(channel, type_str, id_str, false, client)
                 .await?;
         }
@@ -107,390 +99,12 @@ impl Spotify {
         let channel = event.channel();
 
         // Handle bare Spotify URIs (spotify:type:id) posted as text.
-        for (type_str, id_str) in parse_spotify_uris(event.text()) {
+        for (type_str, id_str) in urls::parse_spotify_uris(event.text()) {
             // Include the external URL for URI matches.
             self.handle_spotify_resource(channel, type_str, id_str, true, client)
                 .await?;
         }
 
         Ok(())
-    }
-}
-
-impl Spotify {
-    /// Builds the token request for the Spotify client-credentials grant, authenticating the
-    /// application with a Basic authorization header.
-    fn token_grant(client: &reqwest::Client, credentials: &Credentials) -> reqwest::RequestBuilder {
-        let encoded = BASE64_STANDARD.encode(format!(
-            "{}:{}",
-            credentials.client_id(),
-            credentials.client_secret()
-        ));
-
-        client
-            .post(AUTH_URL)
-            .header(AUTHORIZATION, format!("Basic {encoded}"))
-            .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
-            .form(&[("grant_type", "client_credentials")])
-    }
-
-    #[allow(clippy::too_many_lines)] // inlined per-type renders keep the reply bytes obvious
-    async fn handle_spotify_resource(
-        &self,
-        channel: &str,
-        type_str: &str,
-        id_str: &str,
-        include_url: bool,
-        client: &Client,
-    ) -> Result<(), ZetaError> {
-        match type_str {
-            "track" => {
-                self.send_details(
-                    &format!("tracks/{id_str}"),
-                    channel,
-                    include_url,
-                    client,
-                    |track: &Track, include_url| {
-                        let name = irc::unstyle_text(&track.name);
-                        let artists = join_artists(&track.artists);
-                        let album = irc::unstyle_text(&track.album.name);
-
-                        let mut msg = format!("\x0f{name}\x0310 is a track by {artists}\x0310");
-                        let _ = write!(msg, " from the album \x0f{album}\x0310");
-
-                        if include_url {
-                            let _ = write!(msg, " - {}", track.external_urls.spotify);
-                        }
-
-                        msg
-                    },
-                )
-                .await
-            }
-            "album" => {
-                self.send_details(
-                    &format!("albums/{id_str}"),
-                    channel,
-                    include_url,
-                    client,
-                    |album: &Album, include_url| {
-                        let name = irc::unstyle_text(&album.name);
-                        let artists = join_artists(&album.artists);
-
-                        let mut msg = format!("\x0f{name}\x0310 is an album by {artists}");
-
-                        if include_url {
-                            let _ = write!(msg, " - {}", album.external_urls.spotify);
-                        }
-
-                        msg
-                    },
-                )
-                .await
-            }
-            "artist" => {
-                self.send_details(
-                    &format!("artists/{id_str}"),
-                    channel,
-                    include_url,
-                    client,
-                    |artist: &Artist, include_url| {
-                        let name = irc::unstyle_text(&artist.name);
-                        let genres: Vec<_> = artist.genres.iter().map(|genre| irc::unstyle_text(genre)).collect();
-                        let joined = genres.oxford_join();
-                        let followers = format_number(artist.followers.total);
-                        let follower_noun = text::pluralize_noun(artist.followers.total, "follower");
-
-                        let mut msg = format!("\x0f{name}\x0310 is");
-                        if genres.is_empty() {
-                            let _ = write!(msg, " an");
-                        } else {
-                            let article = text::indefinite_article(&joined);
-                            let _ = write!(msg, " {article} {joined}");
-                        }
-                        let _ = write!(
-                            msg,
-                            " artist with \x0f{followers}\x0310 {follower_noun}"
-                        );
-
-                        if include_url {
-                            let _ = write!(msg, " - {}", artist.external_urls.spotify);
-                        }
-
-                        msg
-                    },
-                )
-                .await
-            }
-            "playlist" => {
-                self.send_details(
-                    &format!("playlists/{id_str}"),
-                    channel,
-                    include_url,
-                    client,
-                    |playlist: &Playlist, include_url| {
-                        let name = irc::unstyle_text(&playlist.name);
-                        let total_tracks = format_number(playlist.tracks.total);
-                        let track_noun = text::pluralize_noun(playlist.tracks.total, "track");
-                        let owner = irc::unstyle_text(
-                            playlist
-                                .owner
-                                .display_name
-                                .as_deref()
-                                .unwrap_or(&playlist.owner.id),
-                        );
-                        let followers = playlist.followers.total;
-
-                        let mut msg = format!(
-                            "\x0f{name}\x0310 is a playlist with\x0f {total_tracks}\x0310 {track_noun} curated by\x0f {owner}\x0310"
-                        );
-
-                        if followers > 0 {
-                            let followers_fmt = format_number(followers);
-                            let follower_noun = text::pluralize_noun(followers, "follower");
-                            let _ = write!(
-                                msg,
-                                " with \x0f{followers_fmt}\x0310 {follower_noun}"
-                            );
-                        }
-
-                        if include_url {
-                            let _ = write!(msg, " - {}", playlist.external_urls.spotify);
-                        }
-
-                        msg
-                    },
-                )
-                .await
-            }
-            _ => {
-                debug!(spotify.resource.type = %type_str, "unsupported spotify type");
-                Ok(())
-            }
-        }
-    }
-
-    async fn fetch<T: for<'de> Deserialize<'de>>(&self, path: &str) -> Result<T, Error> {
-        let token = self
-            .credentials
-            .access_token_shared(Self::token_grant)
-            .await?;
-        let url = format!("{API_BASE_URL}/{path}");
-
-        let request = self
-            .credentials
-            .client()
-            .get(&url)
-            .header(AUTHORIZATION, format!("Bearer {token}"));
-        http::get_json(request).await
-    }
-
-    /// Fetches a resource, formats it, and replies with the message.
-    ///
-    /// `render` receives the fetched details and whether the reply should include the external
-    /// URL. Fetch errors are reported through [`handle_error`].
-    async fn send_details<T, F>(
-        &self,
-        path: &str,
-        channel: &str,
-        include_url: bool,
-        client: &Client,
-        render: F,
-    ) -> Result<(), ZetaError>
-    where
-        T: for<'de> Deserialize<'de>,
-        F: FnOnce(&T, bool) -> String,
-    {
-        match self.fetch::<T>(path).await {
-            Ok(details) => {
-                send_reply(
-                    client,
-                    channel,
-                    labeled_reply("Spotify", render(&details, include_url)),
-                )?;
-            }
-            Err(error) => handle_error(channel, client, &error)?,
-        }
-
-        Ok(())
-    }
-}
-
-fn handle_error(channel: &str, client: &Client, error: &Error) -> Result<(), ZetaError> {
-    warn!(exception.message = %error, "spotify error");
-    if let http::ApiError::Status { status, .. } = error
-        && *status == reqwest::StatusCode::NOT_FOUND
-    {
-        send_reply(
-            client,
-            channel,
-            labeled_reply("Spotify", "Resource not found"),
-        )?;
-    }
-
-    Ok(())
-}
-
-fn join_artists(artists: &[ArtistSimple]) -> String {
-    let names: Vec<String> = artists
-        .iter()
-        .map(|a| format!("\x0f{}\x0310", irc::unstyle_text(&a.name)))
-        .collect();
-    names.oxford_join()
-}
-
-/// Returns the bare `spotify:type:id` URIs found in `text`, in order.
-fn parse_spotify_uris(text: &str) -> Vec<(&str, &str)> {
-    const PREFIX: &str = "spotify:";
-
-    let mut uris = Vec::new();
-    let mut cursor = 0;
-
-    while let Some(offset) = text[cursor..].find(PREFIX) {
-        let start = cursor + offset;
-        let rest = &text[start + PREFIX.len()..];
-        let Some(colon) = rest.find(':') else { break };
-
-        let kind = &rest[..colon];
-        let tail = &rest[colon + 1..];
-        let id_len = tail.bytes().take_while(u8::is_ascii_alphanumeric).count();
-
-        if !kind.is_empty() && kind.bytes().all(|byte| byte.is_ascii_alphabetic()) && id_len > 0 {
-            uris.push((kind, &tail[..id_len]));
-            cursor = start + PREFIX.len() + colon + 1 + id_len;
-        } else {
-            cursor = start + PREFIX.len();
-        }
-    }
-
-    uris
-}
-
-fn parse_spotify_url(url: &Url) -> Option<(&str, &str)> {
-    // path segments: ["track", "4uLU6hMCjMI75M1A2tKUQC"]
-    match zeta_url::path_segments(url)?.as_slice() {
-        [kind, id] => Some((kind, id)),
-        _ => None,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use similar_asserts::assert_eq;
-    use zeta_test_support::settings_tests;
-
-    settings_tests! {
-        Settings,
-        settings,
-        default: {
-            assert!(settings.client_id.is_none());
-            assert!(settings.client_secret.is_none());
-        }
-        deserialize: {
-            "client_id": "id",
-            "client_secret": "secret",
-        } assert: {
-            assert_eq!(settings.client_id.as_deref(), Some("id"));
-            assert_eq!(settings.client_secret.as_deref(), Some("secret"));
-        }
-    }
-
-    #[test]
-    fn parses_bare_spotify_uris() {
-        assert_eq!(
-            parse_spotify_uris(
-                "listen to spotify:track:4uLU6hMCjMI75M1A2tKUQC and \
-                 spotify:album:1DFixLWuPkv3KT3TnV35m3"
-            ),
-            [
-                ("track", "4uLU6hMCjMI75M1A2tKUQC"),
-                ("album", "1DFixLWuPkv3KT3TnV35m3"),
-            ]
-        );
-
-        // Each component must be present and use the URI alphabet.
-        for text in [
-            "spotify::id",
-            "spotify:track:",
-            "spotify:tr4ck:id",
-            // Plain links are handled by `parse_spotify_url`, not the URI parser.
-            "https://open.spotify.com/track/id",
-        ] {
-            assert_eq!(
-                parse_spotify_uris(text),
-                Vec::<(&str, &str)>::new(),
-                "{text}"
-            );
-        }
-
-        // The id ends at the first character outside the alphabet.
-        assert_eq!(
-            parse_spotify_uris("spotify:track:abc! rest"),
-            [("track", "abc")]
-        );
-
-        // Matches are non-overlapping.
-        assert_eq!(
-            parse_spotify_uris("spotify:spotify:track:id"),
-            [("spotify", "track")]
-        );
-    }
-
-    #[test]
-    fn parses_spotify_resource_urls() {
-        fn parse(url: &str) -> Option<(String, String)> {
-            parse_spotify_url(&Url::parse(url).unwrap())
-                .map(|(kind, id)| (kind.to_string(), id.to_string()))
-        }
-
-        assert_eq!(
-            parse("https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC"),
-            Some(("track".to_string(), "4uLU6hMCjMI75M1A2tKUQC".to_string()))
-        );
-        assert_eq!(
-            parse("https://open.spotify.com/album/1DFixLWuPkv3KT3TnV35m3?si=abc"),
-            Some(("album".to_string(), "1DFixLWuPkv3KT3TnV35m3".to_string()))
-        );
-
-        // Root paths and deeper nesting are not resources.
-        assert_eq!(parse("https://open.spotify.com/"), None);
-        assert_eq!(
-            parse("https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC/extra"),
-            None
-        );
-    }
-
-    #[test]
-    fn joins_artists_into_a_sentence() {
-        let artists = |names: &[&str]| {
-            names
-                .iter()
-                .map(|name| ArtistSimple {
-                    name: (*name).to_string(),
-                })
-                .collect::<Vec<_>>()
-        };
-
-        let cases = [
-            ("empty", &[][..], ""),
-            ("single", &["Aurora"][..], "Aurora"),
-            ("pair", &["Aurora", "Sigrid"][..], "Aurora and Sigrid"),
-        ];
-
-        for (case, names, expected) in cases {
-            assert_eq!(
-                irc::strip_formatting(&join_artists(&artists(names))),
-                expected,
-                "{case}"
-            );
-        }
-
-        // The comma sits between two color codes, so `strip_formatting` would swallow it; pin the exact
-        // layout for the three-name variant to keep the Oxford separator covered.
-        assert_eq!(
-            join_artists(&artists(&["Aurora", "Sigrid", "Agnes Obel"])),
-            "\x0fAurora\x0310, \x0fSigrid\x0310, and \x0fAgnes Obel\x0310"
-        );
     }
 }
