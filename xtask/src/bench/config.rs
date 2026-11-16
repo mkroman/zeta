@@ -132,6 +132,15 @@ pub(crate) const WAIVERS: &[Waiver] = &[
                  suite total is -0.05%.",
         expires: Some("2027-05-01"),
     },
+    Waiver {
+        benchmark: "bench_dispatch_url",
+        case: Some("host_miss"),
+        metric: Metric::Ir,
+        reason: "Splitting the Instagram URL module changes codegen layout in the dispatch \
+                 benchmark binary; the host-miss case gains 19 Ir (+0.40%) while the suite \
+                 total is +0.06%.",
+        expires: Some("2027-05-01"),
+    },
     // Waiver {
     //     benchmark: "bench_oxford_join_filtered_iterator",
     //     case: Some("sixty_four_items"),
