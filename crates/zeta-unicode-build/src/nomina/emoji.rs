@@ -9,8 +9,10 @@
 //! Streams are hand-written canonical Huffman over an order-0 or order-1 byte model. Keys are
 //! sorted canonical UTF-8 sequences, delta-coded by first code point; names are the literal
 //! names in entry order; rules are one `u8` per entry with an optional argument byte; skin-tone
-//! rules and published-tone masks are bit-packed. The runtime decodes the four streams once and
-//! binary-searches a UTF-8 key arena.
+//! rules and published-tone masks are bit-packed. The shared
+//! [`EmojiDecoder`](zeta_unicode_format::EmojiDecoder) decodes the four streams once and
+//! binary-searches a UTF-8 key arena; [`verify_streams`] re-decodes the assembled section with
+//! it, so verification exercises the exact path the runtime links.
 //!
 //! # Layout
 //!
@@ -31,7 +33,7 @@ use std::collections::BTreeMap;
 use bytes::BufMut;
 
 use zeta_unicode_format::{
-    EMOJI_STREAM_COUNT, EMOJI_TONE_CODE_BITS, EMOJI_TONE_MASK_BITS, MAX_CPS, MAX_KEY,
+    EMOJI_STREAM_COUNT, EMOJI_TONE_CODE_BITS, EMOJI_TONE_MASK_BITS, EmojiDecoder, MAX_CPS, MAX_KEY,
     MAX_RULE_ARGUMENT, Rule, RuleContext, TONE_NAMES, TONE_RULE_PRIORITY, TONES, ZWJ,
     canonical_emoji_cps, clock_name, encode_cps, family_word, format_toned, is_tone, join_family,
     keycap_word, pack_bits, pair_phrase, plural, rule_name, swap_person, tone_phrase,
@@ -275,15 +277,8 @@ pub fn emoji_section(entries: &[EmojiEntry], ucd: &BTreeMap<u32, String>) -> (Ve
     };
     let (assigned, literal_names, masks) = assign_rules(entries, &all_cps, ucd, &mut stats);
     let payload = encode_payload(entries, &all_cps, &assigned, &literal_names, &masks);
-    verify_streams(
-        entries,
-        &all_cps,
-        &assigned,
-        &payload.decoded_keys,
-        &payload.decoded_names,
-        ucd,
-    );
     let section = assemble(entries.len(), literal_names.len(), &payload);
+    verify_streams(&section, entries, &assigned, ucd);
 
     stats.literals = literal_names.len();
     stats.ruled = entries.len() - stats.literals;
@@ -368,8 +363,6 @@ struct Payload {
     name_stream: Vec<u8>,
     rule_stream: Vec<u8>,
     mask_stream: Vec<u8>,
-    decoded_keys: Vec<u8>,
-    decoded_names: Vec<u8>,
     tone_codes: Vec<u8>,
     tone_masks: Vec<u8>,
     key_bytes: usize,
@@ -475,8 +468,6 @@ fn encode_payload(
         name_stream,
         rule_stream,
         mask_stream,
-        decoded_keys,
-        decoded_names,
         tone_codes: pack_bits(
             entries.iter().map(|entry| entry.tone_code),
             EMOJI_TONE_CODE_BITS,
@@ -515,84 +506,40 @@ fn assemble(entries: usize, literals: usize, payload: &Payload) -> Vec<u8> {
     section
 }
 
-/// Rebuilds every entry from the decoded streams and compares it to the input.
+/// Re-decodes the assembled section and compares every entry to the input.
 fn verify_streams(
+    section: &[u8],
     entries: &[EmojiEntry],
-    all_cps: &[Vec<u32>],
     assigned: &[(Rule, u16)],
-    decoded_keys: &[u8],
-    decoded_names: &[u8],
     ucd: &BTreeMap<u32, String>,
 ) {
-    let decoded_entries = decode_entries(entries.len(), assigned, decoded_keys, decoded_names)
-        .expect("decoded streams parse");
-    for (index, entry) in entries.iter().enumerate() {
-        let (cps, name, rule, arg) = &decoded_entries[index];
-        assert_eq!(cps, &all_cps[index], "decoded key {index}");
-        let materialized = if *rule == Rule::Literal {
-            Some(name.clone())
-        } else {
-            generated_name(*rule, *arg, cps, entries, ucd)
+    let decoded = EmojiDecoder::parse(section).expect("the assembled emoji section parses");
+    assert_eq!(decoded.entry_count(), entries.len(), "decoded entry count");
+    let mut lookup = |cp: u32, out: &mut String| {
+        let Some(name) = ucd.get(&cp) else {
+            return false;
         };
+        out.push_str(name);
+        true
+    };
+    for (index, entry) in entries.iter().enumerate() {
         assert_eq!(
-            materialized.as_deref(),
+            decoded.entry_key(index),
+            Some(entry.key.as_str()),
+            "decoded key {index}"
+        );
+        assert_eq!(
+            decoded.entry_rule(index),
+            assigned.get(index).copied(),
+            "decoded rule {index}"
+        );
+        assert_eq!(
+            decoded.entry_name(&mut lookup, index).as_deref(),
             Some(entry.name.as_str()),
             "decoded name for {:?}",
             entry.key
         );
-        assert_eq!(*rule, assigned[index].0, "decoded rule {index}");
     }
-}
-
-/// A decoded entry: `(code points, literal name, rule, argument)`.
-type DecodedEntry = (Vec<u32>, String, Rule, u16);
-
-/// Decodes the key and literal-name streams back into entries.
-fn decode_entries(
-    count: usize,
-    assigned: &[(Rule, u16)],
-    keys: &[u8],
-    names: &[u8],
-) -> Option<Vec<DecodedEntry>> {
-    let literal_count = assigned
-        .iter()
-        .filter(|(rule, _)| *rule == Rule::Literal)
-        .count();
-    let mut literals = Vec::with_capacity(literal_count);
-    if literal_count > 0 {
-        let mut parts = names.split(|&byte| byte == 0);
-        for _ in 0..literal_count {
-            literals.push(std::str::from_utf8(parts.next()?).ok()?);
-        }
-    } else {
-        assert!(names.is_empty(), "literal bytes without a literal rule");
-    }
-    let mut out = Vec::with_capacity(count);
-    let mut at = 0usize;
-    let mut previous = 0u32;
-    for &(rule, arg) in assigned.iter().take(count) {
-        let (delta, used) = zeta_unicode_format::read_varint(keys.get(at..)?).expect("a key delta");
-        at += used;
-        let first = previous.checked_add(delta)?;
-        previous = first;
-        let (length, used) = zeta_unicode_format::read_varint(keys.get(at..)?)?;
-        at += used;
-        let length = usize::try_from(length).ok()?;
-        let mut cps = Vec::with_capacity(length);
-        cps.push(first);
-        for _ in 1..length {
-            let (cp, used) = zeta_unicode_format::read_varint(keys.get(at..)?)?;
-            at += used;
-            cps.push(cp);
-        }
-        let literal = if rule == Rule::Literal {
-            literals.get(usize::from(arg))?.to_string()
-        } else {
-            String::new()
-        };
-        out.push((cps, literal, rule, arg));
-    }
-    Some(out)
 }
 
 /// Assigns the first grammar rule that reproduces `entry.name`, if any.

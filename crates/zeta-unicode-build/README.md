@@ -74,12 +74,12 @@ writes to `--out-dir` and embeds nothing — so an experiment may raise it above
 
 ## Verification and failure model
 
-Every section round-trips through its decoder; the chosen names are re-decoded by the same
-front-coding decoder the runtime links, and the image layout is re-parsed. The manifest checks
-are `name-stream-round-trip`, `emoji-stream-round-trip`, `general-category-round-trip`,
-`pattern-round-trip` and `image-layout`. With `--verify`, the CLI stages `nomina.bin`,
-verifies it on disk, and only then renames it into place and writes `manifest.json`, so a
-failed verification never leaves a manifest that claims success.
+Every section round-trips through its decoder; the chosen names and the emoji entries are
+re-decoded by the same decoders the runtime links, and the image layout is re-parsed. The
+manifest checks are `name-stream-round-trip`, `emoji-stream-round-trip`,
+`general-category-round-trip`, `pattern-round-trip` and `image-layout`. With `--verify`, the CLI
+stages `nomina.bin`, verifies it on disk, and only then renames it into place and writes
+`manifest.json`, so a failed verification never leaves a manifest that claims success.
 
 Bad inputs, profiles, budgets, baselines and I/O are errors. Malformed UCD records and
 verification mismatches panic, so a returned `TrainOutput` is always verified.
