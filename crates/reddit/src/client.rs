@@ -1,5 +1,6 @@
 //! Client for the Reddit API.
 
+use std::fmt;
 use std::time::Duration;
 
 use reqwest::StatusCode;
@@ -49,6 +50,16 @@ pub struct ClientOptions {
     ///
     /// Defaults to [`HTTP_TIMEOUT`](crate::HTTP_TIMEOUT) when unset.
     pub timeout: Option<Duration>,
+}
+
+// Manual implementation so the client secret and the cached access token are never printed.
+impl fmt::Debug for Client {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Client")
+            .field("client_id", &self.client_id)
+            .field("token", &self.token)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Client {

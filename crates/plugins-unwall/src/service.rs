@@ -1,6 +1,7 @@
 //! Unwall service: the covered-site set, the URL cache, and the submissions.
 
 use std::borrow::Cow;
+use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -40,6 +41,17 @@ pub struct UnwallService {
     covered: ArcSwap<Vec<Site>>,
     /// Collapses a burst of the same article into a single submission.
     inflight: TtlMap<String, CachedUrl>,
+}
+
+// Manual implementation: the repository holds the database pool and the client the HTTP
+// connection state, so only the reader's host and the covered-site count are shown.
+impl fmt::Debug for UnwallService {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("UnwallService")
+            .field("reader_host", &self.reader_base.host_str())
+            .field("covered", &self.covered.load().len())
+            .finish_non_exhaustive()
+    }
 }
 
 impl UnwallService {

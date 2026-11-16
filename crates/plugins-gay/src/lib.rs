@@ -1998,6 +1998,7 @@ const GAY: CommandSpec = CommandSpec::with_args::<Opts>(
 /// A thin command boundary over the profiling engine. The boundary mints a calendar key from the
 /// atelier clock, refuses to consult on subjects that are not present in the channel (the engine
 /// audits only the audience it can see), and renders the verdict for the requesting channel.
+#[derive(Debug)]
 pub struct Gay {
     engine: GayEngine,
 }

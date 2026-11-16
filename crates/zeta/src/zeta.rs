@@ -13,6 +13,7 @@ mod signal;
 #[cfg(test)]
 mod tests;
 
+use std::fmt;
 use std::sync::Arc;
 
 use irc::client::prelude::{Capability, Client};
@@ -39,6 +40,17 @@ pub struct Zeta {
     registry: Registry<BundledPlugin>,
     /// The shared context for plugins
     context: Arc<Context>,
+}
+
+// Manual implementation: the configuration's plugin sections may carry credentials, so the
+// loaded registry and per-plugin context are shown instead of the raw configuration.
+impl fmt::Debug for Zeta {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Zeta")
+            .field("registry", &self.registry)
+            .field("context", &self.context)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Zeta {

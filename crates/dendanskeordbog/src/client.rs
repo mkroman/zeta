@@ -3,6 +3,7 @@
 //! This module provides a high-level async interface for making requests to the dictionary and
 //! parsing the results into structured data.
 
+use std::fmt;
 use std::time::Duration;
 
 use crate::{DictionaryDocument, Error, RequestError};
@@ -29,10 +30,16 @@ const QUERY_WORD_PARAM: &str = "q";
 ///
 /// This client handles the construction of HTTP requests, sending them to the dictionary service,
 /// and parsing the HTML response.
-#[derive(Debug)]
 pub struct Client {
     /// The underlying [`reqwest::Client`] used for making HTTP requests.
     client: reqwest::Client,
+}
+
+// Manual implementation: the HTTP client is opaque and carries no printable plugin state.
+impl fmt::Debug for Client {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Client").finish_non_exhaustive()
+    }
 }
 
 impl Client {

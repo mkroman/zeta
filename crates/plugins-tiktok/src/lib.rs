@@ -11,6 +11,8 @@
 mod oembed;
 mod urls;
 
+use std::fmt;
+
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 use url::Url;
@@ -62,6 +64,17 @@ pub struct Tiktok {
     client: reqwest::Client,
     mirror: Option<MirrorHandle>,
     settings: Settings,
+}
+
+// Manual implementation: the HTTP client is opaque; the mirror is shown through its redacted
+// handle and the settings carry no secrets.
+impl fmt::Debug for Tiktok {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Tiktok")
+            .field("mirror", &self.mirror)
+            .field("settings", &self.settings)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Errors that can occur while summarizing or mirroring TikTok videos.

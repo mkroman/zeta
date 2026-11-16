@@ -23,6 +23,8 @@ pub use error::Error;
 pub use model::Statistics;
 pub use service::Resource;
 
+use std::fmt;
+
 use clap::Parser;
 use tracing::warn;
 use url::Url;
@@ -49,6 +51,14 @@ fn record_reply(error: &Error) -> String {
 pub struct Ofn {
     /// The history service.
     service: OfnService,
+}
+
+// Manual implementation: the service holds the database-backed repository, which is not part of
+// the plugin's printable state.
+impl fmt::Debug for Ofn {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Ofn").finish_non_exhaustive()
+    }
 }
 
 impl Ofn {
@@ -210,7 +220,7 @@ enum Subcommand {
 #[derive(clap::Args, Debug, PartialEq, Eq)]
 pub struct Stats {}
 
-fn formatted_err(error: impl std::fmt::Display) -> String {
+fn formatted_err(error: impl fmt::Display) -> String {
     labeled_reply("OFN", format_args!("Error:\x0f {error}"))
 }
 

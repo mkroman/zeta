@@ -58,6 +58,7 @@ fn build_table(model: &Model<'_>, table: &mut [u16]) {
 ///
 /// This is the single front-coding decoder for both the runtime and the trainer, so
 /// verification exercises exactly the path the linked image uses.
+#[derive(Debug)]
 pub struct NameDecoder<'a> {
     /// The validated run index and block offsets.
     index: NameIndex<'a>,

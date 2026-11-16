@@ -11,6 +11,7 @@ mod tests;
 
 use std::{
     collections::HashSet,
+    fmt,
     path::PathBuf,
     sync::{Arc, OnceLock},
 };
@@ -53,6 +54,24 @@ pub struct Mirror {
     /// The download manager, started by the host during startup with [`Mirror::start`]; empty
     /// until then, and `Some(None)` when it could not be built.
     manager: OnceLock<Option<DownloadManager>>,
+}
+
+// Manual implementation: the S3 client prints its own redacted view, and the download manager
+// is summarized by whether it has started instead of exposing its mailbox.
+impl fmt::Debug for Mirror {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Mirror")
+            .field("s3", &self.s3)
+            .field("ytdlp", &self.ytdlp)
+            .field("download_dir", &self.download_dir)
+            .field("max_concurrent", &self.max_concurrent)
+            .field("in_flight", &self.in_flight.lock().len())
+            .field(
+                "manager_started",
+                &self.manager.get().is_some_and(Option::is_some),
+            )
+            .finish_non_exhaustive()
+    }
 }
 
 impl Mirror {

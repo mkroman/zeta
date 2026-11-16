@@ -35,6 +35,7 @@ impl Default for Settings {
 }
 
 /// The choices plugin: picks an option at random from bot-addressed messages.
+#[derive(Debug)]
 pub struct Choices {
     settings: Settings,
 }

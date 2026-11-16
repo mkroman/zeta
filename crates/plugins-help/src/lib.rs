@@ -22,7 +22,7 @@ use format::{gray, heading, messages};
 /// Responds to `.help` with a usage hint and an index of every plugin that handles commands,
 /// `.help <plugin>` with the plugin's commands, or `.help <command>` with the command's
 /// description, usage and arguments derived from its `clap` type.
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct Help;
 
 #[plugin(name = "help")]

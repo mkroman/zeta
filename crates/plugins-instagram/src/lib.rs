@@ -39,6 +39,7 @@ mod urls;
 #[cfg(test)]
 mod tests;
 
+use std::fmt;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -127,6 +128,19 @@ pub struct Instagram {
     session: TtlCache<Arc<graphql::SessionTokens>>,
     /// The details fetched for each media id, cached so repeated links do not repeat the fetches.
     details: TtlMap<String, MediaDetails>,
+}
+
+// Manual implementation: the HTTP client, the session cookie, and the cached session tokens
+// are not printed.
+impl fmt::Debug for Instagram {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Instagram")
+            .field("mirror", &self.mirror)
+            .field("caption_length", &self.settings.caption_length)
+            .field("session_cookie", &self.session_cookie.is_some())
+            .field("metadata_proxy", &self.metadata_proxy.is_some())
+            .finish_non_exhaustive()
+    }
 }
 
 /// Errors that can occur while summarizing or mirroring Instagram media.

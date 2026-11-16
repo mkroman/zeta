@@ -11,7 +11,7 @@
 //! the plugin is skipped at startup. Invoking `.w` without arguments uses the
 //! `default_location` setting, or replies with usage when unset.
 
-use std::fmt::Write as _;
+use std::fmt::{self, Write as _};
 
 use serde::{Deserialize, Serialize};
 use tracing::debug;
@@ -100,6 +100,17 @@ pub struct OpenWeatherMap {
     language: Option<String>,
     /// The location used when the command is invoked without arguments.
     default_location: Option<String>,
+}
+
+// Manual implementation: the API key and the opaque HTTP client are not printed.
+impl fmt::Debug for OpenWeatherMap {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OpenWeatherMap")
+            .field("units", &self.units)
+            .field("language", &self.language)
+            .field("default_location", &self.default_location)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Errors that can occur during weather lookups.

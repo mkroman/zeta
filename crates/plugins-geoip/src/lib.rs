@@ -8,7 +8,7 @@
 //! The API key is set in `[plugins.geoip]`, falling back to the `GEOIP_API_KEY` environment
 //! variable; a missing key fails plugin initialization and the plugin is skipped at startup.
 
-use std::fmt::Display;
+use std::fmt::{self, Display};
 
 use clap::Parser;
 use hickory_resolver::{
@@ -47,6 +47,13 @@ pub struct GeoIp {
     api_key: String,
     /// The resolver used to turn domains into addresses.
     resolver: TokioResolver,
+}
+
+// Manual implementation: the API key and the opaque HTTP client and resolver are not printed.
+impl fmt::Debug for GeoIp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("GeoIp").finish_non_exhaustive()
+    }
 }
 
 /// Errors that can occur while geolocating an address.
@@ -162,7 +169,7 @@ impl GeoIp {
 }
 
 impl Display for IpInfo {
-    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         let parts = [
             ("AS", self.asn_name.as_str()),
             ("ASN", self.asn.as_str()),

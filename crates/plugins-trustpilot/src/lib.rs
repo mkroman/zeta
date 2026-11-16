@@ -9,6 +9,8 @@
 //! environment variable; a missing key fails plugin initialization and the plugin is skipped
 //! at startup.
 
+use std::fmt;
+
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
@@ -52,6 +54,15 @@ pub struct Trustpilot {
     api_key: String,
     /// The Trustpilot domain used for review links.
     review_domain: String,
+}
+
+// Manual implementation: the API key and the opaque HTTP client are not printed.
+impl fmt::Debug for Trustpilot {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Trustpilot")
+            .field("review_domain", &self.review_domain)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Represents a business unit response from the Trustpilot API.

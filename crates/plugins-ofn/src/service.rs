@@ -15,6 +15,7 @@ use zeta_plugin::{Chain, database::Database};
 use zeta_url::RedactedUrl;
 
 /// A URL history resource from the database, either a YouTube video or a generic URL record.
+#[derive(Debug)]
 pub enum Resource {
     /// A YouTube video.
     YouTubeRecord(YouTubeRecord),

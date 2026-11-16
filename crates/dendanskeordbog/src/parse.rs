@@ -1,5 +1,6 @@
 //! The parsing primitives shared by the dictionary types.
 
+use std::fmt;
 use std::sync::LazyLock;
 
 use scraper::{ElementRef, Selector};
@@ -38,6 +39,14 @@ pub struct Selectors {
     pub audio: Selector,
     /// Selects the phrase text within an idiom.
     pub phrase: Selector,
+}
+
+// `scraper::Selector` does not implement `Debug`, and the selectors are opaque matching state,
+// so the set names itself without listing them.
+impl fmt::Debug for Selectors {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Selectors").finish_non_exhaustive()
+    }
 }
 
 /// A trait for types that can be parsed from an HTML element.

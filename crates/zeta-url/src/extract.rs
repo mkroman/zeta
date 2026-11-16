@@ -3,6 +3,8 @@
 //! Words are matched against a configurable set of scheme prefixes (see [`SchemeMap`]), so that
 //! URLs posted with broken schemes — e.g. `ttps://example.com` — can be extracted and repaired.
 
+use std::fmt;
+
 use url::Url;
 
 /// Map of accepted URL scheme prefixes.
@@ -47,6 +49,17 @@ pub struct ExtractUrls<'a> {
     schemes: SchemeMap,
     /// The length of the shortest accepted scheme, used to reject words quickly.
     min_scheme_len: usize,
+}
+
+// Manual implementation: the iterator borrows the message text, which may carry credentials in
+// a URL's query string and must not end up in a log line through `Debug`.
+impl fmt::Debug for ExtractUrls<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ExtractUrls")
+            .field("schemes", &self.schemes)
+            .field("min_scheme_len", &self.min_scheme_len)
+            .finish_non_exhaustive()
+    }
 }
 
 impl<'a> ExtractUrls<'a> {

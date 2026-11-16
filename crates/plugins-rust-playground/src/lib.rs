@@ -9,6 +9,8 @@
 //! The playground channel (`stable`), build mode (`debug`), edition (`2024`), and output limit
 //! are set in `[plugins.rust_playground]`.
 
+use std::fmt;
+
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
@@ -51,6 +53,15 @@ impl Default for Settings {
 pub struct RustPlayground {
     client: reqwest::Client,
     settings: Settings,
+}
+
+// Manual implementation: the HTTP client is opaque; the settings carry no secrets.
+impl fmt::Debug for RustPlayground {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RustPlayground")
+            .field("settings", &self.settings)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Errors that can occur while evaluating code on the Rust Playground.

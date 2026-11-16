@@ -1,6 +1,7 @@
 //! The subscription index and the routing path that walks it.
 
 use std::collections::HashMap;
+use std::fmt;
 use std::sync::Arc;
 
 use irc::proto::{Command, Message};
@@ -50,6 +51,22 @@ pub struct EventIndex {
     pub(super) url_any: Vec<Subscriber>,
     /// Plugins subscribed to plain-interest event kinds, indexed by [`EventKind::index`].
     kinds: [Vec<Subscriber>; EventKind::ALL.len()],
+}
+
+// Manual implementation: the index holds plugin mailboxes, so the routing tables are
+// summarized by their sizes instead of exposing the subscribers.
+impl fmt::Debug for EventIndex {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("EventIndex")
+            .field("commands", &self.commands.len())
+            .field("url_hosts", &self.url_hosts.len())
+            .field("url_any", &self.url_any.len())
+            .field(
+                "kind_subscribers",
+                &self.kinds.iter().map(Vec::len).sum::<usize>(),
+            )
+            .finish_non_exhaustive()
+    }
 }
 
 impl EventIndex {

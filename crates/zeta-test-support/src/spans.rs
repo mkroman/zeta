@@ -53,7 +53,7 @@ impl RecordedSpan {
 }
 
 /// Records every span created while it is installed.
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct SpanRecorder(Arc<Mutex<Vec<RecordedSpan>>>);
 
 impl SpanRecorder {

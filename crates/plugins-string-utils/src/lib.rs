@@ -69,7 +69,7 @@ const COMMANDS: [Command; 5] = [
 static UNICODE_INIT: Once = Once::new();
 
 /// The string utilities plugin: offline text transformations for its commands.
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct StringUtils;
 
 #[plugin(name = "string_utils")]

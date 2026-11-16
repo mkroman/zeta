@@ -5,6 +5,8 @@
 //! [`PluginSet::construct`] maps a configuration section's plugin name to the matching variant,
 //! and [`LoadedPlugin`] carries the name and subscriptions the runtime routes events with.
 
+use std::fmt;
+
 use figment::value::Value;
 
 use crate::Error;
@@ -25,6 +27,17 @@ pub struct LoadedPlugin<P> {
     pub plugin: P,
     /// The events the plugin registered interest in during construction.
     pub subscriptions: Subscriptions,
+}
+
+// Manual implementation without a `P: Debug` bound: the plugin's own internals are not part of
+// the envelope's identity, which is its name and the subscriptions the runtime routes with.
+impl<P> fmt::Debug for LoadedPlugin<P> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("LoadedPlugin")
+            .field("name", &self.name)
+            .field("subscriptions", &self.subscriptions)
+            .finish_non_exhaustive()
+    }
 }
 
 impl<P> LoadedPlugin<P> {

@@ -6,6 +6,7 @@
 //! [`zeta_cache::TtlCache`], parameterized over the plugin-specific token request itself, and
 //! [`Credentials`] pairs it with the application's credentials and the shared HTTP client.
 
+use std::fmt;
 use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
@@ -107,6 +108,15 @@ impl Default for TokenCache {
     }
 }
 
+// Manual implementation so the cached access token is never printed.
+impl fmt::Debug for TokenCache {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TokenCache")
+            .field("cached", &self.token.with_value(|token| token.is_some()))
+            .finish_non_exhaustive()
+    }
+}
+
 /// An OAuth2 client-credentials API client, shared by the plugins that authenticate through
 /// token endpoints (Spotify, Twitch).
 ///
@@ -124,6 +134,17 @@ pub struct Credentials {
     client_secret: String,
     /// The cached access token.
     token: TokenCache,
+}
+
+// Manual implementation so the client secret and the cached access token are never printed.
+impl fmt::Debug for Credentials {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Credentials")
+            .field("auth_url", &RedactedUrl::from_unparsed(&self.auth_url))
+            .field("client_id", &self.client_id)
+            .field("token", &self.token)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Credentials {
@@ -221,6 +242,38 @@ mod tests {
 
     fn cached_token(cache: &TokenCache) -> Option<Arc<str>> {
         cache.token.get()
+    }
+
+    #[tokio::test]
+    async fn debug_output_redacts_the_token_and_the_client_secret() {
+        let cache = TokenCache::new();
+        cache
+            .get(|| async {
+                Ok::<_, ()>(TokenResponse {
+                    access_token: "super-secret-token".to_owned(),
+                    expires_in: 3600,
+                })
+            })
+            .await
+            .unwrap();
+
+        let debug = format!("{cache:?}");
+
+        assert!(!debug.contains("super-secret-token"), "{debug}");
+        assert!(debug.contains("cached: true"), "{debug}");
+
+        let credentials = Credentials::new(
+            reqwest::Client::new(),
+            "https://auth.example/token?client_secret=super-secret-query",
+            "client-id",
+            "super-secret-client-secret",
+        );
+        let debug = format!("{credentials:?}");
+
+        assert!(!debug.contains("super-secret-client-secret"), "{debug}");
+        assert!(!debug.contains("super-secret-query"), "{debug}");
+        // Non-sensitive state stays visible.
+        assert!(debug.contains("client-id"), "{debug}");
     }
 
     #[tokio::test]

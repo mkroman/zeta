@@ -46,6 +46,13 @@ pub struct Thingiverse {
     app_token: String,
 }
 
+// Manual implementation: the app token and the opaque HTTP client are not printed.
+impl fmt::Debug for Thingiverse {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Thingiverse").finish_non_exhaustive()
+    }
+}
+
 /// Errors that can occur during plugin execution.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {

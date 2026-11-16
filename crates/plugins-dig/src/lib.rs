@@ -9,7 +9,7 @@
 //! A resolver is built once at plugin initialization, querying the nameservers over both UDP
 //! and TCP; the host file is never consulted.
 
-use std::fmt::Display;
+use std::fmt::{self, Display};
 use std::net::IpAddr;
 
 use clap::Parser;
@@ -91,12 +91,20 @@ pub struct Dig {
     resolver: TokioResolver,
 }
 
+// Manual implementation: the hickory resolver does not implement `Debug` and is opaque.
+impl fmt::Debug for Dig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Dig").finish_non_exhaustive()
+    }
+}
+
 /// A successful DNS lookup, formatting one `dig`-style reply line per record.
+#[derive(Debug)]
 #[must_use]
 pub struct LookupResult(Lookup);
 
 impl Display for LookupResult {
-    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         for lookup in self.0.answers() {
             // We need to convert the fields to strings for string padding to work.
             let name = lookup.name.to_string();

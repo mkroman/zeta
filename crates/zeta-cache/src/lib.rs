@@ -9,6 +9,7 @@
 //! individually.
 
 use std::collections::HashMap;
+use std::fmt;
 use std::future::Future;
 use std::hash::Hash;
 use std::sync::Arc;
@@ -34,7 +35,7 @@ pub struct TtlCache<T> {
 }
 
 /// A cached value with its absolute expiry time.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct Entry<T> {
     value: T,
     expires_at: Instant,
@@ -236,6 +237,20 @@ impl<T> TtlCache<T> {
     /// Replaces the cached entry.
     fn replace(&self, entry: Entry<T>) {
         self.entry.store(Some(Arc::new(entry)));
+    }
+}
+
+impl<T> fmt::Debug for TtlCache<T>
+where
+    T: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let entry = self.entry.load();
+
+        f.debug_struct("TtlCache")
+            .field("entry", &entry.as_deref())
+            .field("ttl", &self.ttl)
+            .finish_non_exhaustive()
     }
 }
 
@@ -450,6 +465,21 @@ where
         if let Some(oldest) = oldest {
             entries.remove(&oldest);
         }
+    }
+}
+
+impl<K, V> fmt::Debug for TtlMap<K, V>
+where
+    K: fmt::Debug,
+    V: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TtlMap")
+            .field("entries", &*self.entries.read())
+            .field("ttl", &self.ttl)
+            .field("negative_ttl", &self.negative_ttl)
+            .field("capacity", &self.capacity)
+            .finish_non_exhaustive()
     }
 }
 

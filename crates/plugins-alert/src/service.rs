@@ -3,6 +3,7 @@
 use std::{
     cmp::{Ordering, Reverse},
     collections::BinaryHeap,
+    fmt,
     sync::Arc,
     time::Duration,
 };
@@ -77,6 +78,19 @@ pub struct AlertService {
     scheduler: Scheduler,
     /// The receiver of due alerts, taken by the delivery task on load.
     receiver: Option<mpsc::UnboundedReceiver<Alert>>,
+}
+
+// Manual implementation: the repository holds the database pool and the cache its queue of due
+// alerts, so only the scheduling configuration and the receiver state are shown.
+impl fmt::Debug for AlertService {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AlertService")
+            .field("receiver", &self.receiver.is_some())
+            .field("retry_delay", &self.scheduler.retry_delay)
+            .field("sync_interval", &self.scheduler.sync_interval)
+            .field("window", &self.scheduler.window)
+            .finish_non_exhaustive()
+    }
 }
 
 impl AlertService {

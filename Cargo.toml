@@ -164,6 +164,8 @@ unsafe_code = "forbid"
 missing_docs = "warn"
 # `pub` that no external crate can reach should be `pub(crate)` or private.
 unreachable_pub = "warn"
+# Public types should be printable; secret-bearing types get a redacted manual `Debug`.
+missing_debug_implementations = "warn"
 # Enforce modern Rust 2018+ idioms and patterns
 rust_2018_idioms = { level = "warn", priority = 1 }
 # Catch unnecessary casts between identical types

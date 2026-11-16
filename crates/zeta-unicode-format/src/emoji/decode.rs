@@ -63,6 +63,7 @@ where
 }
 
 /// The decoded emoji section.
+#[derive(Debug)]
 pub struct EmojiDecoder {
     /// Every canonical key, back to back and sorted by UTF-8 bytes.
     keys: Vec<u8>,

@@ -44,6 +44,7 @@ pub use error::Error;
 pub use model::{CachedUrl, HostStatistics, Site, Statistics};
 pub use service::UnwallService;
 
+use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -98,6 +99,18 @@ pub struct Unwall {
     admins: Hostmasks,
     /// Bounds the in-flight article submissions per message burst.
     submits: Arc<tokio::sync::Semaphore>,
+}
+
+// Manual implementation: the service is summarized by its own redacted view, and the submission
+// permits show how much of the burst budget is available.
+impl fmt::Debug for Unwall {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Unwall")
+            .field("service", &self.service)
+            .field("admins", &self.admins)
+            .field("submits_available", &self.submits.available_permits())
+            .finish_non_exhaustive()
+    }
 }
 
 #[plugin(name = "unwall", settings = Settings, urls(any))]

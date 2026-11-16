@@ -582,7 +582,7 @@ pub fn valid_codebook(counts: &[u16], max_bits: u8) -> bool {
 }
 
 /// An MSB-first bit writer.
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct BitWriter {
     out: Vec<u8>,
     accumulator: u64,

@@ -1,9 +1,11 @@
 //! A plugin's handle to the shared mirror.
 
+use std::fmt;
 use std::sync::Arc;
 
 use tracing::warn;
 use url::Url;
+use zeta_url::RedactedUrlRef;
 
 use crate::{MediaId, Mirror, MirrorError};
 
@@ -19,6 +21,21 @@ pub struct MirrorHandle {
     prefix: String,
     /// The base URL for the plugin's public links.
     public_url_base: Url,
+}
+
+// Manual implementation: the shared mirror is shown through its own redacted representation,
+// and the handle only adds the plugin-visible prefix and base URL.
+impl fmt::Debug for MirrorHandle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MirrorHandle")
+            .field("mirror", &self.mirror)
+            .field("prefix", &self.prefix)
+            .field(
+                "public_url_base",
+                &RedactedUrlRef::from_url(&self.public_url_base),
+            )
+            .finish_non_exhaustive()
+    }
 }
 
 impl MirrorHandle {

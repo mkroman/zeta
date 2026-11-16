@@ -188,6 +188,7 @@ impl From<Vec<Fiat>> for FiatCache {
 }
 
 /// Crypto currency quotes plugin, backed by the CoinMarketCap API.
+#[derive(Debug)]
 pub struct CoinMarketCap {
     /// Client for CoinMarketCap API requests, with the API key set as a default header.
     /// Shared with other plugins through [`Context::shared`].
