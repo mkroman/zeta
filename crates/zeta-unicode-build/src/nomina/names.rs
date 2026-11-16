@@ -95,13 +95,13 @@ use zeta_unicode_format::{
 
 use crate::ucd::Inputs;
 
-pub use zeta_unicode_format::{
+pub(crate) use zeta_unicode_format::{
     MAX_NAME_BLOCK_SHIFT as MAX_BLOCK_SHIFT, MIN_NAME_BLOCK_SHIFT as MIN_BLOCK_SHIFT, NameLayout,
 };
 
 /// The default block shift of the unparameterized helpers (32 names).
 #[cfg(test)]
-pub const NAME_BLOCK_SHIFT: u8 = 5;
+pub(crate) const NAME_BLOCK_SHIFT: u8 = 5;
 
 /// The statistic and size breakdown of one encoded name section.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -148,7 +148,7 @@ impl NameStats {
 
 /// An encoded name section plus its size breakdown.
 #[derive(Clone, Debug)]
-pub struct Encoded {
+pub(crate) struct Encoded {
     /// The complete section, ready for [`crate::nomina::image::pack`].
     pub bytes: Vec<u8>,
     /// The statistics and size breakdown of the section.
@@ -156,12 +156,12 @@ pub struct Encoded {
 }
 
 #[cfg(test)]
-pub fn encode_with_block_shift(inputs: &Inputs, block_shift: u8) -> Encoded {
+pub(crate) fn encode_with_block_shift(inputs: &Inputs, block_shift: u8) -> Encoded {
     encode_layout(inputs, block_shift, NameLayout::BlockLocal)
 }
 
 #[cfg(test)]
-pub fn encode_global_with_block_shift(inputs: &Inputs, block_shift: u8) -> Encoded {
+pub(crate) fn encode_global_with_block_shift(inputs: &Inputs, block_shift: u8) -> Encoded {
     encode_layout(inputs, block_shift, NameLayout::Global)
 }
 
@@ -174,7 +174,7 @@ pub fn encode_global_with_block_shift(inputs: &Inputs, block_shift: u8) -> Encod
 /// Panics when `block_shift` is outside [`MIN_BLOCK_SHIFT`]..=[`MAX_BLOCK_SHIFT`], or when the
 /// corpus exceeds the format's name-id or model-table limits.
 #[must_use]
-pub fn encode_global_corpus(corpus: &Corpus, block_shift: u8) -> Encoded {
+pub(crate) fn encode_global_corpus(corpus: &Corpus, block_shift: u8) -> Encoded {
     assert!(
         (MIN_BLOCK_SHIFT..=MAX_BLOCK_SHIFT).contains(&block_shift),
         "block shift {block_shift} is outside {MIN_BLOCK_SHIFT}..={MAX_BLOCK_SHIFT}"
@@ -558,7 +558,7 @@ fn write_symbol(writer: &mut BitWriter, book: &Codebook, symbol: u8) {
 }
 
 /// The parsed name corpus.
-pub struct Corpus {
+pub(crate) struct Corpus {
     /// `(code point, name)`, ascending by code point.
     entries: Vec<(u32, String)>,
     /// The `*` pattern ranges, ascending by first code point.
@@ -573,7 +573,7 @@ pub struct Corpus {
 impl Corpus {
     /// The `*` pattern ranges, sorted by start code point.
     #[must_use]
-    pub fn patterns(&self) -> &[crate::nomina::patterns::Pattern] {
+    pub(crate) fn patterns(&self) -> &[crate::nomina::patterns::Pattern] {
         &self.patterns
     }
 
@@ -596,7 +596,7 @@ impl Corpus {
 /// 255 bytes, when a code point appears twice, or when the corpus has more names than the
 /// format's `u16` name ids can address. Malformed or oversized vendored data is a build
 /// failure.
-pub fn parse_corpus(inputs: &Inputs) -> Corpus {
+pub(crate) fn parse_corpus(inputs: &Inputs) -> Corpus {
     let mut entries: Vec<(u32, String)> = Vec::with_capacity(35_400);
     let mut hangul: Vec<(u32, String)> = Vec::with_capacity(HANGUL_COUNT);
 
@@ -804,7 +804,7 @@ fn parse_cp(text: &str, source: Source<'_>) -> u32 {
 ///
 /// Panics on the first mismatch, or when the section is malformed.
 #[cfg(test)]
-pub fn verify(section: &[u8], inputs: &Inputs) {
+fn verify(section: &[u8], inputs: &Inputs) {
     verify_with_block_shift(section, inputs, NAME_BLOCK_SHIFT);
 }
 
@@ -814,7 +814,7 @@ pub fn verify(section: &[u8], inputs: &Inputs) {
 ///
 /// Panics on the first mismatch, or when the section is malformed.
 #[cfg(test)]
-pub fn verify_with_block_shift(section: &[u8], inputs: &Inputs, block_shift: u8) {
+fn verify_with_block_shift(section: &[u8], inputs: &Inputs, block_shift: u8) {
     verify_layout(section, inputs, block_shift, NameLayout::BlockLocal);
 }
 
@@ -824,7 +824,7 @@ pub fn verify_with_block_shift(section: &[u8], inputs: &Inputs, block_shift: u8)
 ///
 /// Panics on the first mismatch, or when the section is malformed.
 #[cfg(test)]
-pub fn verify_global_with_block_shift(section: &[u8], inputs: &Inputs, block_shift: u8) {
+pub(crate) fn verify_global_with_block_shift(section: &[u8], inputs: &Inputs, block_shift: u8) {
     verify_layout(section, inputs, block_shift, NameLayout::Global);
 }
 
@@ -834,7 +834,7 @@ pub fn verify_global_with_block_shift(section: &[u8], inputs: &Inputs, block_shi
 ///
 /// Panics on the first mismatch, or when the section is malformed.
 #[cfg(test)]
-pub fn verify_layout(section: &[u8], inputs: &Inputs, block_shift: u8, layout: NameLayout) {
+fn verify_layout(section: &[u8], inputs: &Inputs, block_shift: u8, layout: NameLayout) {
     let corpus = parse_corpus(inputs);
     verify_corpus(section, &corpus, block_shift, layout);
 }
@@ -844,7 +844,7 @@ pub fn verify_layout(section: &[u8], inputs: &Inputs, block_shift: u8, layout: N
 /// # Panics
 ///
 /// Panics on the first mismatch, or when the section is malformed.
-pub fn verify_global_corpus(section: &[u8], corpus: &Corpus, block_shift: u8) {
+pub(crate) fn verify_global_corpus(section: &[u8], corpus: &Corpus, block_shift: u8) {
     verify_corpus(section, corpus, block_shift, NameLayout::Global);
 }
 
@@ -853,7 +853,7 @@ pub fn verify_global_corpus(section: &[u8], corpus: &Corpus, block_shift: u8) {
 /// # Panics
 ///
 /// Panics on the first mismatch, or when the section is malformed.
-pub fn verify_corpus(section: &[u8], corpus: &Corpus, block_shift: u8, layout: NameLayout) {
+pub(crate) fn verify_corpus(section: &[u8], corpus: &Corpus, block_shift: u8, layout: NameLayout) {
     let mut decoded = Decoded::new(section, block_shift, layout);
     assert_eq!(
         decoded.name_count(),

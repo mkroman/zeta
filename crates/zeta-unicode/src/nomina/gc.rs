@@ -23,7 +23,7 @@ use zeta_unicode_format::{
 };
 
 /// The parsed general-category section.
-pub struct Gc {
+pub(crate) struct Gc {
     /// First record index of each 2,048-code-point page, plus one sentinel.
     directory: Vec<u16>,
     /// Packed page-relative run start and category id, sorted by start.
@@ -35,7 +35,7 @@ impl Gc {
     ///
     /// Returns `None` for a truncated or inconsistent section.
     #[must_use]
-    pub fn parse(section: &[u8]) -> Option<Self> {
+    pub(crate) fn parse(section: &[u8]) -> Option<Self> {
         let mut header = section;
         let runs = usize::from(header.try_get_u16_le().ok()?);
         let starts_raw = usize::from(header.try_get_u16_le().ok()?);
@@ -112,14 +112,14 @@ impl Gc {
     /// Returns the number of encoded runs.
     #[must_use]
     #[cfg(test)]
-    pub const fn run_count(&self) -> usize {
+    const fn run_count(&self) -> usize {
         self.records.len()
     }
 
     /// Returns the one-based category id of `cp`, or `None` when `cp` is not a Unicode code
     /// point or falls before the first run.
     #[must_use]
-    pub fn general_category(&self, cp: u32) -> Option<u8> {
+    pub(crate) fn general_category(&self, cp: u32) -> Option<u8> {
         if cp > UNICODE_END {
             return None;
         }

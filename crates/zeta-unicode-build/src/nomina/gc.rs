@@ -25,7 +25,7 @@ use zeta_unicode_format::{GC_SHORT_NAMES, UNICODE_END, write_varint};
 use crate::ucd::{hex_u32, records};
 
 /// The general category range table: `(start, end, table id)`.
-pub type GcRange = (u32, u32, u8);
+type GcRange = (u32, u32, u8);
 
 /// Counters and measured sizes for one general-category section build.
 #[derive(Clone, Debug, Default)]
@@ -53,7 +53,7 @@ pub struct GcStats {
 /// Panics when the vendored ranges are malformed. That is a build failure, not a runtime
 /// condition.
 #[must_use]
-pub fn build(derived_general_category: &str) -> (Vec<u8>, GcStats) {
+pub(crate) fn build(derived_general_category: &str) -> (Vec<u8>, GcStats) {
     let ranges = parse_general_category(derived_general_category);
     general_category_section(&ranges)
 }
@@ -70,7 +70,7 @@ pub fn build(derived_general_category: &str) -> (Vec<u8>, GcStats) {
     clippy::too_many_lines,
     reason = "the encoder's linear stream pipeline reads better as one function"
 )]
-pub fn general_category_section(ranges: &[GcRange]) -> (Vec<u8>, GcStats) {
+fn general_category_section(ranges: &[GcRange]) -> (Vec<u8>, GcStats) {
     assert!(!ranges.is_empty(), "an empty range table is not a section");
     let mut stats = GcStats {
         runs: ranges.len(),
@@ -176,7 +176,7 @@ pub fn general_category_section(ranges: &[GcRange]) -> (Vec<u8>, GcStats) {
 /// Panics when a vendored line is malformed or the ranges are not a contiguous partition of
 /// the Unicode range. That is a build failure, not a runtime condition.
 #[must_use]
-pub fn parse_general_category(text: &str) -> Vec<GcRange> {
+fn parse_general_category(text: &str) -> Vec<GcRange> {
     let mut ranges: Vec<GcRange> = Vec::new();
     for (number, line) in records(text) {
         let (lhs, rest) = line

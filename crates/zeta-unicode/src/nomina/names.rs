@@ -11,7 +11,7 @@
 //! the shared decoder's two fixed 256-byte name buffers (the current name and a saved shared
 //! suffix). The decoder itself is per-thread, so name lookups need no lock.
 
-pub use zeta_unicode_format::{NameLayout, write_hangul};
+pub(crate) use zeta_unicode_format::{NameLayout, write_hangul};
 
 use zeta_unicode_format::NameDecoder;
 
@@ -19,7 +19,7 @@ use zeta_unicode_format::NameDecoder;
 ///
 /// The shared decoder already exposes the fixed-size scratch buffers, sequential cursor and
 /// fast decode tables; the wrapper only narrows the visibility to this crate.
-pub struct Names<'a> {
+pub(crate) struct Names<'a> {
     /// The shared front-coding decoder.
     decoder: NameDecoder<'a>,
 }

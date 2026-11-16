@@ -13,8 +13,8 @@
 //! count, the name block shift, the general-category page shift and one `(offset, length)`
 //! pair per section. [`image::pack_with_layout`] writes it; the runtime's `Nomina` reads it.
 
-pub mod emoji;
-pub mod gc;
-pub mod image;
-pub mod names;
-pub mod patterns;
+pub(crate) mod emoji;
+pub(crate) mod gc;
+pub(crate) mod image;
+pub(crate) mod names;
+pub(crate) mod patterns;

@@ -11,7 +11,7 @@
 //! [`NameLookup`](zeta_unicode_format::NameLookup) is that seam: the name layer supplies it, so
 //! this module never depends on the name decoder.
 
-pub use zeta_unicode_format::EmojiDecoder as Emoji;
+pub(crate) use zeta_unicode_format::EmojiDecoder as Emoji;
 
 #[cfg(test)]
 mod tests {
