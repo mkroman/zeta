@@ -79,6 +79,7 @@ tvmaze = ["http", "dep:plugins-tvmaze"]
 twitch = ["http", "dep:plugins-twitch"]
 urban-dictionary = ["http", "dep:plugins-urban-dictionary"]
 unwall = ["database", "http", "dep:plugins-unwall"]
+user-settings = ["database", "dep:plugins-user-settings"]
 youtube = ["http", "dep:plugins-youtube"]
 all = [
     "alert",
@@ -115,6 +116,7 @@ all = [
     "twitch",
     "urban-dictionary",
     "unwall",
+    "user-settings",
     "youtube",
 ]
 
@@ -154,6 +156,7 @@ plugins-tvmaze = { workspace = true, optional = true }
 plugins-twitch = { workspace = true, optional = true }
 plugins-unwall = { workspace = true, optional = true }
 plugins-urban-dictionary = { workspace = true, optional = true }
+plugins-user-settings = { workspace = true, optional = true }
 plugins-youtube = { workspace = true, optional = true }
 serde.workspace = true
 # Embeds `migrations/` for the `database` feature; the host's feature selection supplies the

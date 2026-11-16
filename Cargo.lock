@@ -3043,6 +3043,7 @@ dependencies = [
  "plugins-twitch",
  "plugins-unwall",
  "plugins-urban-dictionary",
+ "plugins-user-settings",
  "plugins-youtube",
  "serde",
  "serde_json",

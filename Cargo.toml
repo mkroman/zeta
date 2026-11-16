@@ -79,6 +79,7 @@ plugins-tvmaze = { path = "crates/plugins-tvmaze", default-features = false }
 plugins-twitch = { path = "crates/plugins-twitch", default-features = false }
 plugins-unwall = { path = "crates/plugins-unwall", default-features = false }
 plugins-urban-dictionary = { path = "crates/plugins-urban-dictionary", default-features = false }
+plugins-user-settings = { path = "crates/plugins-user-settings", default-features = false }
 plugins-youtube = { path = "crates/plugins-youtube", default-features = false }
 proc-macro2 = "1"
 quote = "1"
