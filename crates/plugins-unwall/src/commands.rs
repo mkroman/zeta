@@ -4,10 +4,10 @@ use std::fmt::Write as _;
 
 use tracing::{debug, warn};
 
+use zeta_plugin::irc::{self, MAX_LISTING_LENGTH};
 use zeta_plugin::irc::{COLOR, RESET, labeled_reply, send_reply};
 use zeta_plugin::{Chain, Client, Sender, ZetaError};
 use zeta_utils::duration::TimeInWordsExt;
-use zeta_utils::irc::{self, MAX_LISTING_LENGTH};
 
 use super::args::Add;
 use super::{NAME, Unwall, sites};

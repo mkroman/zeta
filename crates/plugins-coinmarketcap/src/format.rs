@@ -100,7 +100,7 @@ mod tests {
     use std::collections::HashMap;
 
     use coinmarketcap::model::FiatQuote;
-    use zeta_utils::irc;
+    use zeta_plugin::irc;
 
     use super::*;
 

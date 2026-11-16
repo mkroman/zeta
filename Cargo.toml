@@ -126,6 +126,7 @@ wreq = { version = "0.16.1", default-features = false, features = ["tokio-rt", "
 wreq-util = "0.2.0"
 zeta-cache = { path = "crates/zeta-cache" }
 zeta-http = { path = "crates/zeta-http", default-features = false }
+zeta-irc = { path = "crates/zeta-irc" }
 zeta-mirror = { path = "crates/zeta-mirror" }
 zeta-plugin = { path = "crates/zeta-plugin", default-features = false }
 zeta-plugin-macros = { path = "crates/zeta-plugin-macros" }

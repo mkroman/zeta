@@ -248,8 +248,8 @@ mod tests {
     use zeta_http as http;
     use zeta_http::HttpConfig;
     use zeta_http::reqwest;
+    use zeta_plugin::irc;
     use zeta_test_support::settings_tests;
-    use zeta_utils::irc;
 
     #[test]
     fn cli_definition_is_valid() {

@@ -159,7 +159,7 @@ mod tests {
     use super::*;
 
     use wildmatch::WildMatch;
-    use zeta_utils::irc;
+    use zeta_plugin::irc;
 
     #[tokio::test]
     async fn it_should_format_message() {

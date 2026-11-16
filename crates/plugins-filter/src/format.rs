@@ -7,7 +7,7 @@
 use std::fmt::Write as _;
 
 use zeta_plugin::irc::labeled_reply;
-use zeta_utils::irc::{self, MAX_LISTING_LENGTH};
+use zeta_plugin::irc::{self, MAX_LISTING_LENGTH};
 
 use crate::model::Filter;
 

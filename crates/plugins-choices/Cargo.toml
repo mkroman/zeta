@@ -14,7 +14,6 @@ default = []
 rand = { workspace = true }
 serde.workspace = true
 zeta-plugin = { workspace = true }
-zeta-utils = { workspace = true }
 
 [dev-dependencies]
 zeta-test-support = { workspace = true, features = ["context", "http"] }

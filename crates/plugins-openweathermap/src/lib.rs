@@ -18,9 +18,9 @@ use tracing::debug;
 
 use zeta_http as http;
 use zeta_http::reqwest;
+use zeta_plugin::irc;
 use zeta_plugin::irc::{COLOR, PLAIN_REPLY_PREFIX, RESET, plain_reply, send_reply};
 use zeta_plugin::{Chain, Client, CommandEvent, Context, ZetaError, plugin, resolve_secret};
-use zeta_utils::irc;
 use zeta_utils::text::IteratorJoinExt;
 
 mod api;

@@ -27,12 +27,12 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 
 use zeta_cache::TtlCache;
+use zeta_plugin::irc;
 use zeta_plugin::irc::{plain_reply, send_reply, usage_line};
 use zeta_plugin::{
     Chain, Client, CommandEvent, CommandSpec, Context, Subscriptions, ZetaError, plugin,
     plugin_err, resolve_secret,
 };
-use zeta_utils::irc;
 use zeta_utils::text::TruncatableExt;
 
 use coinmarketcap::model::{Coin, CoinQuery, DEFAULT_CURRENCY, Fiat};

@@ -11,9 +11,9 @@
 use rand::prelude::IteratorRandom;
 use serde::{Deserialize, Serialize};
 
+use zeta_plugin::irc;
 use zeta_plugin::irc::send_reply;
 use zeta_plugin::{Client, Context, MessageEvent, ZetaError, plugin};
-use zeta_utils::irc;
 
 /// Settings for the choices plugin, from its `[plugins.choices]` configuration section.
 #[derive(Clone, Debug, Deserialize, Serialize)]

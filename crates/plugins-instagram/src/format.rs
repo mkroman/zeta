@@ -6,7 +6,7 @@
 
 use std::fmt::Write;
 
-use zeta_utils::irc;
+use zeta_plugin::irc;
 use zeta_utils::text::TruncatableExt;
 
 use crate::meta::MediaDetails;

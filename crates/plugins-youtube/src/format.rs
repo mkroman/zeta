@@ -5,9 +5,9 @@
 
 use serde::{Deserialize, Serialize};
 
+use zeta_plugin::irc;
 use zeta_plugin::irc::{labeled_reply, plain_reply};
 use zeta_utils::duration;
-use zeta_utils::irc;
 use zeta_utils::text;
 
 use super::model::{Search, Video};

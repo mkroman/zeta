@@ -16,9 +16,9 @@ use tracing::debug;
 
 use zeta_http as http;
 use zeta_http::reqwest;
+use zeta_plugin::irc;
 use zeta_plugin::irc::{plain_reply, send_reply};
 use zeta_plugin::{Chain, Client, Context, MessageEvent, ZetaError, plugin, resolve_secret};
-use zeta_utils::irc;
 use zeta_utils::text;
 
 mod model;

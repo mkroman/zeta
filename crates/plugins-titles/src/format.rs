@@ -5,8 +5,8 @@
 
 use url::Url;
 
+use zeta_plugin::irc;
 use zeta_plugin::irc::{LABELED_PREFIX_BYTES, PLAIN_REPLY_PREFIX, write_labeled_reply_prefix};
-use zeta_utils::irc;
 use zeta_utils::text::TruncatableExt;
 
 use crate::Settings;

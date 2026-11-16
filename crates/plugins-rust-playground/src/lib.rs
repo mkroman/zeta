@@ -14,9 +14,9 @@ use tracing::debug;
 
 use zeta_http as http;
 use zeta_http::reqwest;
+use zeta_plugin::irc;
 use zeta_plugin::irc::{labeled_reply, send_lookup_reply};
 use zeta_plugin::{Client, CommandEvent, Context, ZetaError, plugin};
-use zeta_utils::irc;
 use zeta_utils::text::{ListJoinExt, TruncatableExt};
 
 const BASE_URL: &str = "https://play.rust-lang.org/execute";

@@ -18,7 +18,6 @@ zeta-plugin = { workspace = true }
 
 [dev-dependencies]
 wildmatch.workspace = true
-zeta-utils = { workspace = true }
 
 [lints]
 workspace = true

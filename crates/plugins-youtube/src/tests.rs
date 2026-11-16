@@ -1,8 +1,8 @@
 //! Tests for settings, URL recognition, and reply formatting.
 
 use zeta_plugin::Chain;
+use zeta_plugin::irc;
 use zeta_test_support::{api_error, settings_tests};
-use zeta_utils::irc;
 
 use super::format::{format_video_message, search_error_reply, video_error_reply};
 use super::urls::is_youtube_url;

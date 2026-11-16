@@ -1,4 +1,4 @@
-//! Helpers for IRC reply formatting, addressing, and line budgets.
+//! IRC reply formatting, addressing, and line budgets for the zeta IRC bot.
 //!
 //! Plugin replies follow a common visual convention: a teal `>` marker (mIRC color 10), an
 //! optional bold label naming the source, and the message body with values emphasized by
@@ -6,11 +6,12 @@
 //! reply; one without is a plain reply. The helpers here produce those byte sequences so the
 //! exact escape codes are written down in one place.
 //!
-//! The module is split by concern: `reply` builds the formatted reply lines, `address` unwraps
+//! The crate is split by concern: `reply` builds the formatted reply lines, `address` unwraps
 //! a nickname mention from the start of a message, `formatting` removes formatting codes and
 //! control characters from text that came from elsewhere, and `budget` fills a listing up to
-//! the reply line limit. Every public item is re-exported here, so `zeta_utils::irc::{…}` stays
-//! the import path for all of them.
+//! the reply line limit. Every public item is re-exported here, so `zeta_irc::{…}` is the
+//! import path for all of them; plugins reach them through `zeta_plugin::irc::{…}` instead of
+//! depending on this crate.
 
 mod address;
 mod budget;

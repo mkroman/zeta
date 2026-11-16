@@ -2,8 +2,8 @@
 
 use clap::Parser;
 
+use zeta_plugin::irc;
 use zeta_plugin::{CatalogEntry, CommandSpec, PluginCatalog, UrlScope};
-use zeta_utils::irc;
 
 use super::catalog::{command_messages, find_command, find_plugin};
 use super::details::{Detail, details_list};

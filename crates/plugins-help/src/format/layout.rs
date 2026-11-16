@@ -1,6 +1,6 @@
 //! Packing help lists into messages within the IRC message budget.
 
-use zeta_utils::irc;
+use zeta_plugin::irc;
 
 use super::{MAX_MESSAGE_LENGTH, SEPARATOR};
 

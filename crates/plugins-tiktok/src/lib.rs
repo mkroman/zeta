@@ -19,10 +19,10 @@ use zeta_http as http;
 use zeta_http::reqwest;
 use zeta_http::{RedirectError, RequestError};
 use zeta_mirror::{MediaId, MirrorHandle};
+use zeta_plugin::irc;
 use zeta_plugin::irc::{COLOR, RESET, plain_reply, send_reply};
 use zeta_plugin::{Chain, Client, Context, UrlEvent, ZetaError, plugin};
 use zeta_url::RedactedUrl;
-use zeta_utils::irc;
 use zeta_utils::text::TruncatableExt;
 
 use self::oembed::OEmbed;
