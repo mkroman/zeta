@@ -262,7 +262,7 @@ mod tests {
         assert_eq!(
             settings.read(&identity("unset"), &ACCENT).await.unwrap(),
             Some("DE"),
-            "hostmask fallback identities normalize their case"
+            "every identity normalizes its case"
         );
     }
 

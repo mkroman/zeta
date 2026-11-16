@@ -175,13 +175,15 @@ macro_rules! event_sender {
             Sender::from_message(&self.message)
         }
 
-        /// Returns the stable identity of the sender, if it has a nickname prefix.
+        /// Returns the identity of the sender, if it has a nickname prefix and is logged into
+        /// services.
         ///
-        /// The identity prefers the IRCv3 `account` tag — the services account the sender is
-        /// logged into, stable across clients and connections — and falls back to the sender's
-        /// `user@host`. Plugins that personalize behavior per user resolve their settings
-        /// through [`Context::accounts`](crate::Context::accounts) with it, and the
-        /// service tracks the hostmasks each identity is seen from.
+        /// The identity is the IRCv3 `account` tag — the services account the sender is
+        /// logged into, stable across clients and connections. A sender who has not identified
+        /// has no identity ([`None`]): per-user state does not apply to them. Plugins that
+        /// personalize behavior per user resolve their settings through
+        /// [`Context::accounts`](crate::Context::accounts) with it, and the tracker records
+        /// the hostmasks each account is seen from.
         #[cfg(feature = "database")]
         #[must_use]
         pub fn identity(&self) -> Option<crate::accounts::UserIdentity> {

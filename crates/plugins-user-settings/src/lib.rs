@@ -12,9 +12,10 @@
 //! [`UserSettings`](zeta_plugin::accounts::UserSettings) facet of the shared account service,
 //! so every reader sees a write immediately.
 //!
-//! Users are identified by the IRCv3 `account` tag when the network reports one, else their
-//! `user@host` — the framework resolves that into a [`UserIdentity`] on every event. There is
-//! nothing to configure; the plugin needs only the database.
+//! Users are identified by their IRCv3 services account: a sender who has not identified has
+//! no identity, and the command tells them so — the framework resolves the `account` tag into
+//! a [`UserIdentity`] on every event. There is nothing to configure; the plugin needs only the
+//! database.
 
 use std::sync::Arc;
 
