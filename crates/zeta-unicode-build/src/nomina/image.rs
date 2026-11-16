@@ -28,25 +28,25 @@ use zeta_unicode_format::{
 
 use super::names::NameLayout;
 
-pub use zeta_unicode_format::{
+pub(crate) use zeta_unicode_format::{
     EMOJI, GC, GC_PAGE_SHIFT, HEADER_LEN, MAGIC, NAMES, PATTERNS, SECTION_COUNT,
 };
 
 /// The block shift of the unparameterized [`pack`] helper: 32 names per block.
 #[cfg(test)]
-pub const NAME_BLOCK_SHIFT: u8 = 5;
+const NAME_BLOCK_SHIFT: u8 = 5;
 
 /// The name layout byte for the block-local front-coding layout.
-pub const LAYOUT_BLOCK_LOCAL: u8 = NameLayout::BlockLocal.id();
+const LAYOUT_BLOCK_LOCAL: u8 = NameLayout::BlockLocal.id();
 /// The name layout byte for the global checkpointed layout.
-pub const LAYOUT_GLOBAL: u8 = NameLayout::Global.id();
+const LAYOUT_GLOBAL: u8 = NameLayout::Global.id();
 
 /// Packs four sections into a flat Nomina image with the documented shifts.
 ///
 /// Sections are appended in id order, each starting on an 8-byte boundary.
 #[must_use]
 #[cfg(test)]
-pub fn pack(sections: [&[u8]; SECTION_COUNT], version: (u8, u8, u8)) -> Vec<u8> {
+fn pack(sections: [&[u8]; SECTION_COUNT], version: (u8, u8, u8)) -> Vec<u8> {
     pack_with(sections, version, NAME_BLOCK_SHIFT, GC_PAGE_SHIFT)
 }
 
@@ -56,7 +56,7 @@ pub fn pack(sections: [&[u8]; SECTION_COUNT], version: (u8, u8, u8)) -> Vec<u8> 
 /// `nomina::names::encode_global`.
 #[must_use]
 #[cfg(test)]
-pub fn pack_global(sections: [&[u8]; SECTION_COUNT], version: (u8, u8, u8)) -> Vec<u8> {
+fn pack_global(sections: [&[u8]; SECTION_COUNT], version: (u8, u8, u8)) -> Vec<u8> {
     pack_with_layout(
         sections,
         version,
@@ -79,7 +79,7 @@ pub fn pack_global(sections: [&[u8]; SECTION_COUNT], version: (u8, u8, u8)) -> V
 /// limit, and the runtime rejects any other page shift in `Nomina::new`.
 #[must_use]
 #[cfg(test)]
-pub fn pack_with(
+fn pack_with(
     sections: [&[u8]; SECTION_COUNT],
     version: (u8, u8, u8),
     name_block_shift: u8,
@@ -102,7 +102,7 @@ pub fn pack_with(
 /// `gc_page_shift` is not [`GC_PAGE_SHIFT`], or when `name_layout` is not one of
 /// [`LAYOUT_BLOCK_LOCAL`] / [`LAYOUT_GLOBAL`].
 #[must_use]
-pub fn pack_with_layout(
+pub(crate) fn pack_with_layout(
     sections: [&[u8]; SECTION_COUNT],
     version: (u8, u8, u8),
     name_block_shift: u8,

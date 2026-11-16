@@ -9,9 +9,9 @@
 //! `emoji`, section 2 is `gc` and section 3 is the pattern table parsed by [`image`]. [`crate`]
 //! wraps one image in a thread-local name decoder and process-wide emoji and category tables.
 
-pub mod emoji;
-pub mod gc;
-pub mod image;
-pub mod names;
+pub(crate) mod emoji;
+pub(crate) mod gc;
+pub(crate) mod image;
+pub(crate) mod names;
 
-pub use image::Nomina;
+pub(crate) use image::Nomina;

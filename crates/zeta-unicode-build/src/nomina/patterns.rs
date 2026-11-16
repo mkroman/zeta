@@ -26,7 +26,7 @@ use crate::ucd::{hex_u32, records};
 
 /// One `*`-pattern range: `prefix + hex(cp) + suffix`.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Pattern {
+pub(crate) struct Pattern {
     /// First code point in the range.
     pub lo: u32,
     /// Last code point in the range, inclusive.
@@ -57,7 +57,7 @@ pub struct PatternStats {
 /// Panics when a vendored line is malformed. That is a build failure, not a runtime condition.
 #[must_use]
 #[cfg(test)]
-pub fn build(derived_names: &str) -> (Vec<u8>, PatternStats) {
+pub(crate) fn build(derived_names: &str) -> (Vec<u8>, PatternStats) {
     let patterns = parse_patterns(derived_names);
     pattern_section(&patterns)
 }
@@ -69,7 +69,7 @@ pub fn build(derived_names: &str) -> (Vec<u8>, PatternStats) {
 /// Panics when a line carries more than one placeholder, a reversed range, or a range past
 /// [`UNICODE_END`]. That is a build failure, not a runtime condition.
 #[must_use]
-pub fn parse_patterns(derived_names: &str) -> Vec<Pattern> {
+pub(crate) fn parse_patterns(derived_names: &str) -> Vec<Pattern> {
     let mut patterns = Vec::new();
     for (number, line) in records(derived_names) {
         let (lhs, rhs) = line
@@ -131,7 +131,7 @@ pub fn parse_patterns(derived_names: &str) -> Vec<Pattern> {
 /// list is longer than 255 entries, or the encoded section does not decode back to
 /// `patterns`. That is a build failure, not a runtime condition.
 #[must_use]
-pub fn pattern_section(patterns: &[Pattern]) -> (Vec<u8>, PatternStats) {
+pub(crate) fn pattern_section(patterns: &[Pattern]) -> (Vec<u8>, PatternStats) {
     let mut stats = PatternStats {
         patterns: patterns.len(),
         ..PatternStats::default()

@@ -46,7 +46,7 @@ use crate::ucd::{hex_u32, records};
 
 /// One canonical emoji entry, as it should appear in the table.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct EmojiEntry {
+pub(crate) struct EmojiEntry {
     /// Canonical UTF-8 key with `U+FE0F` removed.
     pub key: String,
     /// The published CLDR name.
@@ -108,7 +108,11 @@ pub struct EmojiStats {
 /// does not reproduce the name falls back to a literal. Every stream round-trips through the
 /// decoder before the section is returned.
 #[must_use]
-pub fn build(emoji_text: &str, named_text: &str, derived_names: &str) -> (Vec<u8>, EmojiStats) {
+pub(crate) fn build(
+    emoji_text: &str,
+    named_text: &str,
+    derived_names: &str,
+) -> (Vec<u8>, EmojiStats) {
     let entries = canonical_entries(emoji_text, named_text);
     let ucd = ucd_names(derived_names);
     emoji_section(&entries, &ucd)
@@ -126,7 +130,7 @@ pub fn build(emoji_text: &str, named_text: &str, derived_names: &str) -> (Vec<u8
 /// Panics when a vendored line is malformed or a canonical key is not a scalar value. That is
 /// a build failure, not a runtime condition.
 #[must_use]
-pub fn canonical_entries(emoji_text: &str, named_text: &str) -> Vec<EmojiEntry> {
+fn canonical_entries(emoji_text: &str, named_text: &str) -> Vec<EmojiEntry> {
     let all = parse_emoji(emoji_text, named_text);
 
     // Canonicalize: strip U+FE0F, keeping the highest-precedence name per canonical key.
@@ -241,7 +245,7 @@ pub fn canonical_entries(emoji_text: &str, named_text: &str) -> Vec<EmojiEntry> 
 ///
 /// Panics when a vendored line is malformed. That is a build failure, not a runtime condition.
 #[must_use]
-pub fn ucd_names(derived_names: &str) -> BTreeMap<u32, String> {
+fn ucd_names(derived_names: &str) -> BTreeMap<u32, String> {
     let mut names = BTreeMap::new();
     for (number, line) in records(derived_names) {
         let (lhs, rhs) = line
@@ -266,7 +270,7 @@ pub fn ucd_names(derived_names: &str) -> BTreeMap<u32, String> {
 /// rule argument, or when the assembled section does not round-trip. That is a build failure,
 /// not a runtime condition.
 #[must_use]
-pub fn emoji_section(entries: &[EmojiEntry], ucd: &BTreeMap<u32, String>) -> (Vec<u8>, EmojiStats) {
+fn emoji_section(entries: &[EmojiEntry], ucd: &BTreeMap<u32, String>) -> (Vec<u8>, EmojiStats) {
     let all_cps: Vec<Vec<u32>> = entries
         .iter()
         .map(|entry| code_points(&entry.key))

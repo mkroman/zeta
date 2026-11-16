@@ -18,7 +18,7 @@ use zeta_unicode_format::{
 /// The first Unicode release whose UCD ships `NamedSequences.txt` (4.1.0 introduced it).
 ///
 /// Releases before this one may omit the file; later releases must include it.
-pub const NAMED_SEQUENCES_SINCE: (u8, u8, u8) = (4, 1, 0);
+const NAMED_SEQUENCES_SINCE: (u8, u8, u8) = (4, 1, 0);
 
 /// The five UCD texts, the UCD version their headers agree on, and the Emoji version.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -150,7 +150,7 @@ pub enum InputError {
 /// Iterates the non-empty, non-comment lines of a UCD text with their 1-based line numbers.
 ///
 /// A leading byte-order mark is ignored, so a BOM-prefixed file parses like a plain one.
-pub fn records(text: &str) -> impl Iterator<Item = (usize, &str)> {
+pub(crate) fn records(text: &str) -> impl Iterator<Item = (usize, &str)> {
     let text = text.trim_prefix('\u{feff}');
     text.lines()
         .map(|line| line.trim_suffix('\r'))
@@ -165,7 +165,7 @@ pub fn records(text: &str) -> impl Iterator<Item = (usize, &str)> {
 ///
 /// Panics with the offending text when it is not a hexadecimal `u32`.
 #[must_use]
-pub fn hex_u32(text: &str) -> u32 {
+pub(crate) fn hex_u32(text: &str) -> u32 {
     let text = text.trim();
     u32::from_str_radix(text, 16)
         .unwrap_or_else(|error| panic!("invalid hexadecimal code point {text:?}: {error}"))

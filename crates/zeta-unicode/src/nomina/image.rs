@@ -32,7 +32,7 @@ use zeta_unicode_format::{Header, UNICODE_END, read_varint, write_pattern_name};
 
 use super::names::{self, Names};
 
-pub use zeta_unicode_format::{EMOJI, GC, NAMES, PATTERNS};
+pub(crate) use zeta_unicode_format::{EMOJI, GC, NAMES, PATTERNS};
 
 /// Returns the payload of section `id` from a Nomina image.
 ///
@@ -40,12 +40,12 @@ pub use zeta_unicode_format::{EMOJI, GC, NAMES, PATTERNS};
 /// section does not build the name decoder. Returns `None` for a foreign magic, a different
 /// section count, an unknown id or an out-of-bounds range.
 #[must_use]
-pub fn section(table: &[u8], id: usize) -> Option<&[u8]> {
+pub(crate) fn section(table: &[u8], id: usize) -> Option<&[u8]> {
     Header::parse(table)?.section(table, id)
 }
 
 /// A parsed Nomina image.
-pub struct Nomina<'a> {
+pub(crate) struct Nomina<'a> {
     /// The decoded name section.
     names: Names<'a>,
     /// The `*`-pattern section.
@@ -62,7 +62,7 @@ impl<'a> Nomina<'a> {
     ///
     /// The image must outlive the returned [`Nomina`] because the decoder reads it in place.
     #[must_use]
-    pub fn new(table: &'a [u8]) -> Option<Self> {
+    pub(crate) fn new(table: &'a [u8]) -> Option<Self> {
         let header = Header::parse(table)?;
         let names = Names::new(
             header.section(table, NAMES)?,
@@ -78,7 +78,7 @@ impl<'a> Nomina<'a> {
     /// This is the zero-allocation path: the only buffers are the name section's fixed 256-byte
     /// scratch arrays. A stored name decodes at most one block.
     #[must_use = "the return value reports whether the code point has a name"]
-    pub fn write_name(&mut self, cp: u32, out: &mut String) -> bool {
+    pub(crate) fn write_name(&mut self, cp: u32, out: &mut String) -> bool {
         if let Some(id) = self.names.id_of(cp) {
             return self.names.write_id(id, out);
         }
@@ -93,7 +93,7 @@ impl<'a> Nomina<'a> {
     /// Stored names, Hangul names and pattern names all come back owned because they are
     /// decoded into a temporary string. Use [`Self::write_name`] to avoid the allocation.
     #[must_use]
-    pub fn name(&mut self, cp: u32) -> Option<String> {
+    pub(crate) fn name(&mut self, cp: u32) -> Option<String> {
         let mut out = String::new();
         self.write_name(cp, &mut out).then_some(out)
     }

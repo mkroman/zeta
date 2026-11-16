@@ -22,7 +22,7 @@ use crate::actor::Rewrite;
 use crate::currency::{self, build_context};
 
 /// Evaluates `line` through the actor, panicking if it has stopped.
-pub async fn evaluate(rink: &Rink, line: &str, rewrite: Rewrite) -> String {
+pub(crate) async fn evaluate(rink: &Rink, line: &str, rewrite: Rewrite) -> String {
     rink.eval_and_format(line, rewrite)
         .await
         .expect("the rink actor must be running")
@@ -30,7 +30,7 @@ pub async fn evaluate(rink: &Rink, line: &str, rewrite: Rewrite) -> String {
 
 /// A minimal live currency dataset: USD, DKK and JPY against the bundled euro, plus a
 /// Bitcoin substance so the subunit expressions resolve.
-pub const TEST_CURRENCY_DATA: &str = r#"[
+pub(crate) const TEST_CURRENCY_DATA: &str = r#"[
     {
         "name": "USD",
         "doc": null,
@@ -80,13 +80,13 @@ pub const TEST_CURRENCY_DATA: &str = r#"[
 ]"#;
 
 /// Builds a CoinMarketCap client configuration for the tests.
-pub fn test_client_options() -> coinmarketcap::ClientOptions {
+pub(crate) fn test_client_options() -> coinmarketcap::ClientOptions {
     coinmarketcap::ClientOptions::default()
 }
 
 /// A ranked cryptocurrency listing fixture: Ethereum and a faked euro coin, plus a symbol
 /// rink's loader would reject.
-pub const TEST_LISTINGS_DATA: &str = r#"{
+pub(crate) const TEST_LISTINGS_DATA: &str = r#"{
     "data": [
         {
             "id": 1027,
@@ -141,7 +141,7 @@ pub const TEST_LISTINGS_DATA: &str = r#"{
 
 /// Builds a plugin with a bundled-only context, with currency fetching enabled and pointed
 /// at `url` when given.
-pub fn test_plugin(url: Option<String>) -> Rink {
+pub(crate) fn test_plugin(url: Option<String>) -> Rink {
     let mut rink = Rink {
         engine: Some(build_context(None, None).unwrap()),
         actor: None,
@@ -159,7 +159,7 @@ pub fn test_plugin(url: Option<String>) -> Rink {
 }
 
 /// Builds a plugin with currency fetching disabled.
-pub fn offline_plugin() -> Rink {
+pub(crate) fn offline_plugin() -> Rink {
     let mut rink = Rink {
         engine: Some(build_context(None, None).unwrap()),
         actor: None,
@@ -177,7 +177,7 @@ pub fn offline_plugin() -> Rink {
 }
 
 /// Starts a wiremock server serving `TEST_CURRENCY_DATA` at the currency path.
-pub async fn currency_server(status: u16) -> MockServer {
+pub(crate) async fn currency_server(status: u16) -> MockServer {
     let server = MockServer::start().await;
 
     Mock::given(method("GET"))
@@ -191,7 +191,7 @@ pub async fn currency_server(status: u16) -> MockServer {
 
 /// Starts a wiremock server serving `TEST_LISTINGS_DATA` at the CoinMarketCap listings
 /// path.
-pub async fn listings_server(status: u16) -> MockServer {
+pub(crate) async fn listings_server(status: u16) -> MockServer {
     let server = MockServer::start().await;
 
     Mock::given(method("GET"))
@@ -210,7 +210,7 @@ pub async fn listings_server(status: u16) -> MockServer {
 /// wiremock's pool, where another test can acquire it: the pooled server is reset,
 /// unmounting these mocks, and this plugin's requests would then be recorded against
 /// whichever test happened to borrow it.
-pub async fn plugin_with_listings(status: u16) -> (Rink, MockServer, MockServer) {
+pub(crate) async fn plugin_with_listings(status: u16) -> (Rink, MockServer, MockServer) {
     let fiat_server = currency_server(200).await;
     let listings_server = listings_server(status).await;
 
