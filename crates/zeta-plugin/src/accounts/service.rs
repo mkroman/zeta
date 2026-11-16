@@ -2,8 +2,8 @@
 //!
 //! The host constructs one instance over the shared pool, attaches it to the context, feeds it
 //! every incoming IRC message through [`Accounts::track`], and spawns
-//! [`Accounts::run_flush`](Self::run_flush) to move observations to the database. Clones share
-//! the same state, cache and pool, so a change written through the `.set` command is
+//! [`Accounts::run_flush`](Accounts::run_flush) to move observations to the database. Clones
+//! share the same state, cache and pool, so a change written through the `.set` command is
 //! visible to every reader immediately.
 
 use std::collections::HashMap;
@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use irc::proto::{Command, Message};
 use parking_lot::Mutex;
-use tracing::warn;
+use tracing::{Instrument, warn};
 
 use crate::accounts::hostmasks::ObservedHostmask;
 use crate::accounts::identity::UserIdentity;
@@ -168,6 +168,12 @@ impl Accounts {
             return;
         }
 
+        // The cap holds here too, not only in `observe_session`: notifications for unknown
+        // nicks must not grow the map past it either.
+        if sessions.len() >= SESSION_CAPACITY {
+            return;
+        }
+
         sessions.insert(
             nick,
             Session {
@@ -180,7 +186,12 @@ impl Accounts {
     }
 
     /// Inserts or updates the session for `nick`, marking it dirty when anything changed.
+    ///
+    /// The account is stored lowercased, like [`UserIdentity::key`] spells the identities the
+    /// rows are stored under, so a flushed observation is always stored — and looked up — under
+    /// the canonical form.
     fn observe_session(&self, nick: &str, account: &str, hostmask: &str) {
+        let account = account.to_ascii_lowercase();
         let mut sessions = self.sessions.lock();
 
         if sessions.len() >= SESSION_CAPACITY && !sessions.contains_key(nick) {
@@ -188,7 +199,7 @@ impl Accounts {
         }
 
         let entry = sessions.entry(nick.to_owned()).or_insert_with(|| Session {
-            account: account.to_owned(),
+            account: account.clone(),
             hostmask: hostmask.to_owned(),
             dirty: true,
         });
@@ -248,35 +259,60 @@ impl Accounts {
     /// Returns [`DbError`] when the batched upsert fails; the sessions stay dirty, so the next
     /// flush retries them.
     pub async fn flush(&self) -> Result<usize, DbError> {
-        let batch: Vec<(String, String)> = {
-            let mut sessions = self.sessions.lock();
-            let mut batch = Vec::new();
+        // The snapshot borrows out of the map without clearing anything: the flag moves only
+        // once the write has succeeded.
+        let batch: Vec<(String, String, String)> = {
+            let sessions = self.sessions.lock();
 
-            for session in sessions.values_mut() {
-                if session.dirty && !session.hostmask.is_empty() {
-                    batch.push((session.account.clone(), session.hostmask.clone()));
-                    session.dirty = false;
-                }
-            }
-
-            drop(sessions);
-            batch
+            sessions
+                .iter()
+                .filter(|(_, session)| session.dirty && !session.hostmask.is_empty())
+                .map(|(nick, session)| {
+                    (
+                        nick.clone(),
+                        session.account.clone(),
+                        session.hostmask.clone(),
+                    )
+                })
+                .collect()
         };
 
         if batch.is_empty() {
             return Ok(0);
         }
 
-        let recorded = batch.len();
-        self.repository.observe_hostmasks(&batch).await?;
+        let observations: Vec<(String, String)> = batch
+            .iter()
+            .map(|(_, account, hostmask)| (account.clone(), hostmask.clone()))
+            .collect();
+        self.repository.observe_hostmasks(&observations).await?;
 
-        Ok(recorded)
+        // Recorded. A session whose account or hostmask changed while the write ran was
+        // re-marked dirty by the tracker, so only the ones still holding what was written are
+        // cleared — the changed ones retry with their new values on the next flush.
+        {
+            let mut sessions = self.sessions.lock();
+
+            for (nick, account, hostmask) in &batch {
+                if let Some(session) = sessions.get_mut(nick)
+                    && session.account == *account
+                    && session.hostmask == *hostmask
+                {
+                    session.dirty = false;
+                }
+            }
+        }
+
+        Ok(batch.len())
     }
 
     /// Flushes the dirty sessions on the flush interval, until the task is dropped.
     ///
-    /// The host spawns this once at startup; a failed flush is logged with its operator-grade
-    /// chain, and the failed sessions stay dirty for the next tick.
+    /// The host spawns this once at startup. Every tick opens its own `accounts.flush` span —
+    /// the tracker's flushes are background work, so without a per-unit span neither the
+    /// failure log nor the batched upsert's database span would reach the backend. A failed
+    /// flush is logged with its operator-grade chain, and the failed sessions stay dirty for
+    /// the next tick.
     pub async fn run_flush(self: Arc<Self>) {
         let mut ticker = tokio::time::interval(FLUSH_INTERVAL);
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -284,18 +320,22 @@ impl Accounts {
         loop {
             ticker.tick().await;
 
-            match self.flush().await {
-                Ok(0) => {}
-                Ok(recorded) => {
-                    tracing::debug!("flushed {recorded} observed hostmasks");
-                }
-                Err(error) => {
-                    warn!(
-                        exception.message = %crate::Chain(&error),
-                        "could not flush the observed hostmasks"
-                    );
+            async {
+                match self.flush().await {
+                    Ok(0) => {}
+                    Ok(recorded) => {
+                        tracing::debug!("flushed {recorded} observed hostmasks");
+                    }
+                    Err(error) => {
+                        warn!(
+                            exception.message = %crate::Chain(&error),
+                            "could not flush the observed hostmasks"
+                        );
+                    }
                 }
             }
+            .instrument(tracing::info_span!("accounts.flush"))
+            .await;
         }
     }
 }
@@ -305,6 +345,18 @@ mod tests {
     use irc::proto::message::Tag;
 
     use super::*;
+
+    /// Whether any session would be flushed on the next tick.
+    ///
+    /// The dirty flags are internal, so a test that asserts on the retry contract reads them
+    /// through this instead of guessing from a flush count.
+    fn has_dirty_sessions(accounts: &Accounts) -> bool {
+        accounts
+            .sessions
+            .lock()
+            .values()
+            .any(|session| session.dirty)
+    }
 
     /// A `PRIVMSG` from `nick!user@host` carrying the given tags.
     fn message(tags: &[(&str, &str)]) -> Message {
@@ -475,6 +527,47 @@ mod tests {
         // The extended-join placeholder for an unidentified joiner is not tracked.
         accounts.track(&extended_join("anon", "a", "anon.host", "*"));
         assert_eq!(accounts.flush().await.unwrap(), 0);
+    }
+
+    #[sqlx::test(migrator = "zeta_test_support::MIGRATOR")]
+    async fn a_failed_flush_keeps_the_sessions_dirty(db: sqlx::PgPool) {
+        let accounts = Accounts::new(db.clone());
+
+        accounts.track(&message(&[("account", "alice")]));
+        assert!(has_dirty_sessions(&accounts));
+
+        // Take the database away: the batched upsert fails, and the sessions stay dirty for
+        // the next flush instead of losing the batch.
+        db.close().await;
+        assert!(accounts.flush().await.is_err());
+        assert!(
+            has_dirty_sessions(&accounts),
+            "a failed flush must not clear what it did not record"
+        );
+    }
+
+    #[sqlx::test(migrator = "zeta_test_support::MIGRATOR")]
+    async fn mixed_case_accounts_are_tracked_under_the_lowercase_identity(db: sqlx::PgPool) {
+        let accounts = Accounts::new(db);
+
+        // Services report the account in its registered spelling; the identity keys — and so
+        // the rows — are lowercase regardless.
+        accounts.track(&message(&[("account", "Alice")]));
+        assert_eq!(accounts.flush().await.unwrap(), 1);
+
+        let observed = accounts
+            .hostmasks(&tracked_identity("alice"))
+            .await
+            .expect("the observations load");
+        assert_eq!(observed[0].hostmask, "nick!user@host");
+
+        // An `ACCOUNT` notification for the same account updates the same session instead of
+        // creating a second one under another spelling.
+        accounts.track(&account_notification("nick", "ALICE"));
+        assert!(
+            !has_dirty_sessions(&accounts),
+            "the lowercased account is unchanged, so nothing is dirty"
+        );
     }
 
     #[sqlx::test(migrator = "zeta_test_support::MIGRATOR")]
