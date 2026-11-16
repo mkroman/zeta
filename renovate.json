@@ -48,7 +48,7 @@
       "minimumReleaseAge": "7 days"
     },
     // Group mise CLI and mise-action updates across workflows, the Dockerfile,
-    // and tool constraints
+    // and tool constraints, at most twice a month
     {
       "matchPackageNames": [
         "jdx/mise",
@@ -56,7 +56,10 @@
         "ghcr.io/jdx/mise",
         "mise"
       ],
-      "groupName": "mise"
+      "groupName": "mise and cli action",
+      "schedule": [
+        "on the 1st and 15th day of the month"
+      ]
     },
     // Group Docker build tool updates in mise.docker.toml
     {
