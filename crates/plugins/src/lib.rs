@@ -51,6 +51,16 @@ for_each_bundled_plugin!(define_bundled_plugin_enum);
 for_each_bundled_plugin!(impl_plugin_for_bundled_plugin);
 for_each_bundled_plugin!(impl_plugin_set_for_bundled_plugin);
 
+// Manual implementation without a bound on the variants: the enum is identified by the plugin
+// name, and a plugin's internals are not part of the loaded set's description.
+impl std::fmt::Debug for BundledPlugin {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BundledPlugin")
+            .field("name", &self.name())
+            .finish()
+    }
+}
+
 /// The bundled plugins' database migrations, embedded at compile time.
 ///
 /// The path passed to [`sqlx::migrate!`] is relative to this crate's manifest, so the migrations

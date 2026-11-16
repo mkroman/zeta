@@ -18,6 +18,7 @@ mod metadata;
 #[cfg(test)]
 mod tests;
 
+use std::fmt;
 use std::sync::{Arc, OnceLock};
 
 use serde::{Deserialize, Serialize};
@@ -93,6 +94,24 @@ pub struct Titles {
     ///
     /// Shared rather than cloned per URL: the permits are the plugin's concurrency budget.
     fetches: Arc<Semaphore>,
+}
+
+// Manual implementation: the browser-emulated HTTP client is opaque, so it is summarized by
+// the settings, the cached catalog size, and the remaining fetch permits.
+impl fmt::Debug for Titles {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Titles")
+            .field("settings", &self.settings)
+            .field(
+                "catalog_entries",
+                &self
+                    .catalog
+                    .get()
+                    .map_or(0, |catalog| catalog.entries.len()),
+            )
+            .field("fetches_available", &self.fetches.available_permits())
+            .finish_non_exhaustive()
+    }
 }
 
 #[plugin(name = "titles", settings = Settings, urls(any))]

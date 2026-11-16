@@ -1,5 +1,6 @@
 //! Client for the Kagi Search API.
 
+use std::fmt;
 use std::time::{Duration, Instant};
 
 use reqwest::header::{
@@ -45,6 +46,16 @@ pub struct Client {
     session_duration: Duration,
     /// The `Accept-Language` header sent with requests.
     language: HeaderValue,
+}
+
+// Manual implementation so the Kagi login token is never printed.
+impl fmt::Debug for Client {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Client")
+            .field("session_duration", &self.session_duration)
+            .field("language", &self.language)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Session {

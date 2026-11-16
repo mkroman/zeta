@@ -53,6 +53,7 @@ pub struct Settings {
 }
 
 /// Spotify integration plugin.
+#[derive(Debug)]
 pub struct Spotify {
     credentials: Credentials,
 }

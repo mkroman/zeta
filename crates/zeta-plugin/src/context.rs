@@ -2,6 +2,7 @@
 
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
+use std::fmt;
 use std::sync::Arc;
 #[cfg(feature = "http")]
 use std::sync::OnceLock;
@@ -56,6 +57,16 @@ impl SharedState {
             .load()
             .get(&TypeId::of::<T>())
             .and_then(|state| Arc::clone(state).downcast::<T>().ok())
+    }
+}
+
+// Manual implementation: the published values are type-erased and may hold anything, so only
+// their number is shown.
+impl fmt::Debug for SharedState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SharedState")
+            .field("published", &self.states.load().len())
+            .finish_non_exhaustive()
     }
 }
 
@@ -176,6 +187,24 @@ impl Context {
     pub fn http(&self) -> &reqwest::Client {
         self.http
             .get_or_init(|| zeta_http::build_client(self.config.http()))
+    }
+}
+
+// Manual implementation: the database pool and HTTP client are opaque resources, so their
+// presence is shown instead of the values themselves.
+impl fmt::Debug for Context {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut debug = f.debug_struct("Context");
+        debug
+            .field("config", &self.config)
+            .field("shared", &self.shared);
+
+        #[cfg(feature = "database")]
+        debug.field("database", &self.db.is_some());
+        #[cfg(feature = "http")]
+        debug.field("http", &self.http.get().is_some());
+
+        debug.finish_non_exhaustive()
     }
 }
 

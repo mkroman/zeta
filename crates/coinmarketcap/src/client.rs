@@ -1,6 +1,7 @@
 //! Client for the CoinMarketCap API.
 
 use std::collections::HashMap;
+use std::fmt;
 use std::time::Duration;
 
 use reqwest::StatusCode;
@@ -53,12 +54,21 @@ pub struct ClientOptions {
 }
 
 /// A client for the CoinMarketCap API.
-#[derive(Debug)]
 pub struct Client {
     /// HTTP client for CoinMarketCap API requests, with the API key set as a default header.
     http: reqwest::Client,
     /// The base URL the client issues requests against; `API_BASE_URL` outside of tests.
     base: String,
+}
+
+// Manual implementation: the API key is a default header on the HTTP client, so the client
+// itself must not be printed.
+impl fmt::Debug for Client {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Client")
+            .field("base", &self.base)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Client {
@@ -343,6 +353,16 @@ mod tests {
         let err = api_error(StatusCode::BAD_REQUEST, text);
 
         assert!(matches!(err, Error::NotFound));
+    }
+
+    #[test]
+    fn debug_output_redacts_the_api_key() {
+        let client = Client::try_new("super-secret-api-key").expect("client builds");
+
+        let debug = format!("{client:?}");
+
+        assert!(!debug.contains("super-secret-api-key"), "{debug}");
+        assert!(debug.contains(API_BASE_URL), "{debug}");
     }
 
     #[test]

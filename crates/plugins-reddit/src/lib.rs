@@ -52,6 +52,7 @@ pub enum Error {
 }
 
 /// Reddit integration plugin.
+#[derive(Debug)]
 pub struct Reddit {
     /// Reddit API client
     client: reddit::Client,

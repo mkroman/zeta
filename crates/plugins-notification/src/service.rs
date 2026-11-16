@@ -2,6 +2,7 @@
 //! database.
 
 use std::collections::HashMap;
+use std::fmt;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use tokio::sync::Mutex;
@@ -49,6 +50,17 @@ pub struct NotificationService {
     pending: AtomicUsize,
     /// The maximum number of pending notifications a target may have in a channel.
     max_pending_per_target: usize,
+}
+
+// Manual implementation: the repository holds the database pool and the cache the pending
+// notifications, so only the pending count and the configured bound are shown.
+impl fmt::Debug for NotificationService {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("NotificationService")
+            .field("pending", &self.pending.load(Ordering::Relaxed))
+            .field("max_pending_per_target", &self.max_pending_per_target)
+            .finish_non_exhaustive()
+    }
 }
 
 impl NotificationService {

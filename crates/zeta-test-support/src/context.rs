@@ -66,6 +66,7 @@ pub fn publish_recording(ctx: &zeta_plugin::Context) -> Recording {
 ///
 /// It registers one command (`.recording`) so registries can exercise command publication, and
 /// appends `"message"` and `"shutdown"` to the log from the matching handlers.
+#[derive(Debug)]
 pub struct RecordingPlugin {
     /// The log the plugin appends to, shared with the test.
     pub recording: Recording,

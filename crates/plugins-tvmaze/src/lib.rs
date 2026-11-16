@@ -7,6 +7,8 @@
 //! are reported in the channel.
 //!
 //! The TVmaze API is public and needs no credentials. The plugin has no settings.
+use std::fmt;
+
 use serde::Deserialize;
 use tracing::{debug, instrument};
 
@@ -39,6 +41,13 @@ pub enum Error {
 pub struct Tvmaze {
     /// HTTP client for API requests.
     client: reqwest::Client,
+}
+
+// Manual implementation: the HTTP client is opaque and carries no printable plugin state.
+impl fmt::Debug for Tvmaze {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Tvmaze").finish_non_exhaustive()
+    }
 }
 
 /// Represents a TV show from the TVmaze API.

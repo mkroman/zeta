@@ -38,6 +38,7 @@ pub use error::Error;
 pub use model::{Criteria, Filter, NewFilter};
 pub use service::FilterService;
 
+use std::fmt;
 use std::sync::Arc;
 
 use zeta_plugin::irc::{labeled_reply, parse_or_usage, send_reply};
@@ -62,6 +63,17 @@ pub struct FilterPlugin {
     /// The compiled admin hostmasks; senders whose `nick!user@host` matches one of them are
     /// authorized to manage filters.
     admins: Hostmasks,
+}
+
+// Manual implementation: the service is summarized by its own redacted view and the admin
+// matcher by its compiled patterns.
+impl fmt::Debug for FilterPlugin {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("FilterPlugin")
+            .field("service", &self.service)
+            .field("admins", &self.admins)
+            .finish_non_exhaustive()
+    }
 }
 
 /// The reply sent to senders that are not authorized to manage filters.

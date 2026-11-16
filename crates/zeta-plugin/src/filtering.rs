@@ -10,6 +10,7 @@
 //! up — the host never needs to name the filter service, and the filter plugin never needs to
 //! depend on the host.
 
+use std::fmt;
 use std::sync::Arc;
 
 use url::Url;
@@ -50,6 +51,16 @@ pub trait EventFilter: Send + Sync {
 #[derive(Clone, Default)]
 pub struct FilterHandle {
     inner: Option<Arc<dyn EventFilter>>,
+}
+
+// Manual implementation: the filter service is type-erased, so only whether one is published
+// is shown.
+impl fmt::Debug for FilterHandle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("FilterHandle")
+            .field("published", &self.inner.is_some())
+            .finish_non_exhaustive()
+    }
 }
 
 impl FilterHandle {

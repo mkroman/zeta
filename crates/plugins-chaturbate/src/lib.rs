@@ -5,6 +5,8 @@
 //! is not public. The details are scraped from the room page's `window.initialRoomDossier`
 //! JSON blob rather than an API; the plugin has no settings.
 
+use std::fmt;
+
 use serde::Deserialize;
 use tracing::{debug, warn};
 use url::Url;
@@ -23,6 +25,13 @@ const URL_HOSTS: &[&str] = &["chaturbate.com", "www.chaturbate.com"];
 /// Plugin for handling Chaturbate URLs and fetching broadcaster room info.
 pub struct Chaturbate {
     client: reqwest::Client,
+}
+
+// Manual implementation: the HTTP client is opaque and carries no printable plugin state.
+impl fmt::Debug for Chaturbate {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Chaturbate").finish_non_exhaustive()
+    }
 }
 
 /// Errors that can occur when fetching or parsing a Chaturbate room.

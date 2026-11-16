@@ -10,6 +10,7 @@
 //! `403 Forbidden` refreshes the token and retries the search once. The token binds the caller's
 //! IP address and User-Agent, so the init and search requests must go through one client.
 
+use std::fmt;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -51,6 +52,18 @@ pub struct HowLongToBeat {
     client: reqwest::Client,
     /// Cached search token, shared so a search only borrows it.
     auth: TtlCache<Arc<str>>,
+}
+
+// Manual implementation: the HTTP client and the cached search token are not printed.
+impl fmt::Debug for HowLongToBeat {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("HowLongToBeat")
+            .field(
+                "authenticated",
+                &self.auth.with_value(|token| token.is_some()),
+            )
+            .finish_non_exhaustive()
+    }
 }
 
 /// Errors that can occur during API interactions.

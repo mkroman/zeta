@@ -38,6 +38,7 @@
 //! tasks, `actor` owns the context and serializes evaluations, `currency` plumbs the live
 //! dataset, `classify` corrects unit casing, and `render` formats the replies.
 
+use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -84,6 +85,21 @@ pub struct Rink {
     /// Whether to load live cryptocurrency units; effective only when the coinmarketcap plugin
     /// has shared its client.
     crypto_enabled: bool,
+}
+
+// Manual implementation: the rink context, actor handle, HTTP client, and shared CoinMarketCap
+// client are opaque resources, so only the plugin's own state is shown.
+impl fmt::Debug for Rink {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Rink")
+            .field("running", &self.actor.is_some())
+            .field(
+                "currency_cached",
+                &self.currency.with_value(|currency| currency.is_some()),
+            )
+            .field("crypto_enabled", &self.crypto_enabled)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Settings for the rink plugin, from its `[plugins.rink]` configuration section.

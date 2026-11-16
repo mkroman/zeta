@@ -1,5 +1,6 @@
 //! The long-lived task that runs one plugin.
 
+use std::fmt;
 use std::marker::PhantomData;
 use std::panic::{AssertUnwindSafe, resume_unwind};
 use std::sync::Arc;
@@ -33,6 +34,15 @@ pub(crate) struct PluginTask<P> {
     handle: JoinHandle<()>,
     /// The plugin type, named only so the runtime that spawns the tasks stays generic over it.
     plugin: PhantomData<fn() -> P>,
+}
+
+// Manual implementation without a `P: Debug` bound: the task is identified by its plugin name.
+impl<P> fmt::Debug for PluginTask<P> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PluginTask")
+            .field("name", &self.name)
+            .finish_non_exhaustive()
+    }
 }
 
 impl<P> PluginTask<P>
@@ -221,8 +231,8 @@ mod tests {
     #[derive(Debug)]
     struct TransportDetail;
 
-    impl std::fmt::Display for TransportDetail {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    impl fmt::Display for TransportDetail {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             f.write_str("connection refused")
         }
     }
@@ -233,8 +243,8 @@ mod tests {
     #[derive(Debug)]
     struct LookupFailed(TransportDetail);
 
-    impl std::fmt::Display for LookupFailed {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    impl fmt::Display for LookupFailed {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             f.write_str("lookup failed")
         }
     }
@@ -294,8 +304,8 @@ mod tests {
     #[derive(Debug)]
     struct LoadFailed;
 
-    impl std::fmt::Display for LoadFailed {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    impl fmt::Display for LoadFailed {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             f.write_str("load failed")
         }
     }

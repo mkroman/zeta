@@ -5,7 +5,7 @@
 //! definition and example text is truncated to `max_definition_length` characters (default
 //! 400) with an ellipsis suffix; an empty query replies with usage.
 
-use std::fmt::Write;
+use std::fmt::{self, Write};
 
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -42,6 +42,15 @@ impl Default for Settings {
 pub struct UrbanDictionary {
     client: reqwest::Client,
     settings: Settings,
+}
+
+// Manual implementation: the HTTP client is opaque; the settings carry no secrets.
+impl fmt::Debug for UrbanDictionary {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("UrbanDictionary")
+            .field("settings", &self.settings)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Errors that can occur during execution.

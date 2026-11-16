@@ -9,7 +9,7 @@
 //! environment variable — raises the API rate limit. The token is optional: a missing one
 //! does not prevent the plugin from initializing.
 
-use std::fmt::Write;
+use std::fmt::{self, Write};
 
 use serde::{Deserialize, Serialize};
 use tracing::debug;
@@ -54,6 +54,14 @@ pub enum Error {
 /// Holds the HTTP client to reuse connection pools.
 pub struct GitHub {
     client: reqwest::Client,
+}
+
+// Manual implementation: the configured token is a default authorization header on the HTTP
+// client, so the client itself must not be printed.
+impl fmt::Debug for GitHub {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("GitHub").finish_non_exhaustive()
+    }
 }
 
 /// Represents the top-level search response from GitHub API.

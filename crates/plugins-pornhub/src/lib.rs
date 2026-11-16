@@ -6,6 +6,8 @@
 //!
 //! The plugin has no settings.
 
+use std::fmt;
+
 use serde::Deserialize;
 use tracing::{debug, warn};
 use url::Url;
@@ -26,6 +28,13 @@ const ERROR_CODE_NOT_FOUND: &str = "1002";
 pub struct PornHub {
     /// The inner HTTP client.
     client: reqwest::Client,
+}
+
+// Manual implementation: the HTTP client is opaque and carries no printable plugin state.
+impl fmt::Debug for PornHub {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PornHub").finish_non_exhaustive()
+    }
 }
 
 /// Errors that can occur when interacting with the PornHub API.

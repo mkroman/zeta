@@ -27,6 +27,7 @@ pub use model::{Alert, NewAlert};
 pub use service::AlertService;
 pub use time::ParseTimeError;
 
+use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -95,6 +96,19 @@ pub struct AlertPlugin {
     scheduler: Option<tokio::task::JoinHandle<()>>,
     /// The delivery task, drained on shutdown so it drops its IRC sender.
     delivery: Option<tokio::task::JoinHandle<()>>,
+}
+
+// Manual implementation: the service is summarized by its own redacted view, and the tasks are
+// shown by whether they are running.
+impl fmt::Debug for AlertPlugin {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AlertPlugin")
+            .field("service", &self.service)
+            .field("receiver", &self.receiver.is_some())
+            .field("scheduler", &self.scheduler.is_some())
+            .field("delivery", &self.delivery.is_some())
+            .finish_non_exhaustive()
+    }
 }
 
 #[plugin(name = "alert", settings = Settings)]

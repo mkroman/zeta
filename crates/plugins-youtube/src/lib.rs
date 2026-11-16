@@ -22,6 +22,7 @@
 //! so those plugins can share it without enabling this plugin.
 
 use std::collections::HashMap;
+use std::fmt;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -107,6 +108,23 @@ pub struct YouTube {
     /// The map is shared behind an `Arc` so a reply borrows the titles instead of cloning one
     /// per video.
     video_categories: Arc<TtlCache<Arc<HashMap<String, Category>>>>,
+}
+
+// Manual implementation: the API key and the opaque HTTP client are not printed, and the cache
+// is summarized by whether it holds the category map.
+impl fmt::Debug for YouTube {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("YouTube")
+            .field("region_code", &self.region_code)
+            .field("safe_search", &self.safe_search)
+            .field(
+                "categories_cached",
+                &self
+                    .video_categories
+                    .with_value(|categories| categories.is_some()),
+            )
+            .finish_non_exhaustive()
+    }
 }
 
 /// YouTube API and plugin-specific error types.

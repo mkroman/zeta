@@ -13,6 +13,8 @@ pub use error::Error;
 pub use model::{NewNotification, Notification};
 pub use service::NotificationService;
 
+use std::fmt;
+
 use serde::{Deserialize, Serialize};
 use sqlx::types::chrono::Local;
 use tracing::warn;
@@ -53,6 +55,15 @@ impl Default for Settings {
 pub struct NotificationPlugin {
     /// The notification service.
     service: NotificationService,
+}
+
+// Manual implementation: the service is summarized by its own redacted view.
+impl fmt::Debug for NotificationPlugin {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("NotificationPlugin")
+            .field("service", &self.service)
+            .finish_non_exhaustive()
+    }
 }
 
 #[plugin(name = "notification", settings = Settings, messages)]

@@ -46,6 +46,7 @@ impl Default for Settings {
 }
 
 /// Kagi search integration.
+#[derive(Debug)]
 pub struct Kagi {
     /// Kagi search client.
     client: kagi::Client,

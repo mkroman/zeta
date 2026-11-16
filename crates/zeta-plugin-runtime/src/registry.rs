@@ -7,6 +7,7 @@
 //! [`LoadedPlugin`] into its own long-lived task and routes events to them through the dispatch
 //! index.
 
+use std::fmt;
 use std::sync::Arc;
 
 use figment::value::Value;
@@ -25,6 +26,28 @@ pub struct Registry<P> {
 impl<P> Default for Registry<P> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// Manual implementation without a `P: Debug` bound: the registry is described by the names of
+// the plugins it holds, not by their internals.
+impl<P> fmt::Debug for Registry<P> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let plugins = self
+            .plugins
+            .iter()
+            .map(|plugin| plugin.name)
+            .collect::<Vec<_>>();
+        let failed = self
+            .failed_plugins
+            .iter()
+            .map(|(name, _)| *name)
+            .collect::<Vec<_>>();
+
+        f.debug_struct("Registry")
+            .field("plugins", &plugins)
+            .field("failed_plugins", &failed)
+            .finish()
     }
 }
 

@@ -51,6 +51,7 @@ pub struct Settings {
 ///
 /// This plugin listens for Twitch.tv URLs in messages and expands them with
 /// information about the stream, clip, or video.
+#[derive(Debug)]
 pub struct Twitch {
     /// The client-credentials API client.
     credentials: Credentials,

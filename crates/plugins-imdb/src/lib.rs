@@ -81,6 +81,7 @@ impl Opts {
 ///
 /// Prints details about IMDb links posted in a channel — titles as well as persons — and handles
 /// the `!imdb <title>` command for searching IMDb.
+#[derive(Debug)]
 pub struct Imdb {
     /// IMDb GraphQL client.
     client: GraphQlClient,

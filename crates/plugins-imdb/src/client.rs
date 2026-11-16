@@ -10,6 +10,8 @@ mod query;
 #[cfg(test)]
 mod tests;
 
+use std::fmt;
+
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::json;
@@ -35,6 +37,15 @@ pub struct GraphQlClient {
     http: reqwest::Client,
     /// Whether to include adult titles in search results.
     include_adult: bool,
+}
+
+// Manual implementation: the HTTP client carries the localization headers and is opaque.
+impl fmt::Debug for GraphQlClient {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("GraphQlClient")
+            .field("include_adult", &self.include_adult)
+            .finish_non_exhaustive()
+    }
 }
 
 impl GraphQlClient {

@@ -1,5 +1,6 @@
 //! Filter service, persisting filters in the database and keeping them indexed in memory.
 
+use std::fmt;
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
@@ -26,6 +27,16 @@ pub struct FilterService {
     repo: FilterRepository,
     /// The in-memory index of all filters.
     index: ArcSwap<FilterIndex>,
+}
+
+// Manual implementation: the repository holds the database pool and the index the compiled
+// filters, so the service is summarized by how many filters are indexed.
+impl fmt::Debug for FilterService {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("FilterService")
+            .field("filters", &self.index.load().len())
+            .finish_non_exhaustive()
+    }
 }
 
 impl FilterService {

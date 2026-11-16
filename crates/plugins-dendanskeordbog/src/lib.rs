@@ -53,6 +53,7 @@ fn lookup_reply(error: &dendanskeordbog::Error) -> String {
 }
 
 /// The Den Danske Ordbog plugin: looks up Danish words on behalf of `.ddo` commands.
+#[derive(Debug)]
 pub struct DenDanskeOrdbog {
     client: dendanskeordbog::Client,
     settings: Settings,

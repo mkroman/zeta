@@ -27,7 +27,7 @@ const HEALTH_DESCRIPTION: &str = "Show memory usage, runtime task stats, and dat
 const HEALTH_DESCRIPTION: &str = "Show memory usage and runtime task stats";
 
 /// The health plugin: reports process telemetry for `.health` commands.
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct Health;
 
 #[plugin(name = "health")]
@@ -53,6 +53,7 @@ impl Health {
 }
 
 /// Process telemetry snapshot.
+#[derive(Debug)]
 pub struct Snapshot {
     /// The RSS memory usage, in MiB.
     pub phys_mem: f64,
@@ -71,6 +72,7 @@ pub struct Snapshot {
 
 /// Database connection pool statistics.
 #[cfg(feature = "database")]
+#[derive(Debug)]
 pub struct PoolStats {
     /// The number of connections currently established by the pool.
     pub size: u32,

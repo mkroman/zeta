@@ -6,6 +6,7 @@
 //! the index to close every mailbox, then await the tasks — an implementation detail instead of
 //! a sequence the host has to reproduce.
 
+use std::fmt;
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -53,6 +54,21 @@ pub struct PluginRuntime<P> {
     /// `zeta.plugin.shutdown` span. The hooks run in the plugin tasks, so the parent is set
     /// explicitly; it keeps the shutdown in one trace.
     shutdown_span: Arc<OnceLock<Span>>,
+}
+
+// Manual implementation without a `P: Debug` bound: the running plugins are described by their
+// names, and the dispatch index and filters by their own summaries.
+impl<P> fmt::Debug for PluginRuntime<P> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let plugins = self.tasks.iter().map(|task| task.name).collect::<Vec<_>>();
+
+        f.debug_struct("PluginRuntime")
+            .field("index", &self.index)
+            .field("plugins", &plugins)
+            .field("filters", &self.filters)
+            .field("startup_pending", &self.startup.len())
+            .finish_non_exhaustive()
+    }
 }
 
 impl<P> PluginRuntime<P>
