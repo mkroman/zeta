@@ -3,7 +3,7 @@
 ARG RUST_VERSION=1.100-bookworm
 
 # Official mise image, pinned by digest so the tool bootstrap is reproducible.
-FROM ghcr.io/jdx/mise:2026.11.8@sha256:5c6e71a86c8c997c32d30a169b4269bec9d4681a804e29078bac8f44109f2edc AS mise
+FROM ghcr.io/jdx/mise:2026.11.9@sha256:9a182adba2584a6f5b29ddc1f2c7651c93694a5f829d74452b90214616baacf4 AS mise
 
 # Base layer with build tools
 FROM rust:${RUST_VERSION} AS chef
