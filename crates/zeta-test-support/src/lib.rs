@@ -31,7 +31,7 @@ pub use database::MIGRATOR;
 pub use http::{api_error, not_found_server, refused_get, timeout_error, wiremock};
 pub use http::{assert_redactions, assert_timeout_redactions, refused_address};
 #[cfg(feature = "spans")]
-pub use spans::{RecordedSpan, SpanRecorder};
+pub use spans::{LogBuffer, RecordedSpan, SpanRecorder};
 
 /// Implementation details the exported test macros resolve through `$crate`.
 ///
