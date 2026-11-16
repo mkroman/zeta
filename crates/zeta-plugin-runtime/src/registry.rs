@@ -13,7 +13,10 @@ use std::sync::Arc;
 use figment::value::Value;
 use tracing::{debug, error, warn};
 
-use zeta_plugin::{CatalogEntry, Chain, Context, Error, LoadedPlugin, PluginCatalog, PluginSet};
+use zeta_plugin::{
+    CatalogEntry, Chain, Context, Error, LoadedPlugin, PluginCatalog, PluginSet,
+    UserSettingsCatalog,
+};
 
 /// Plugin registry.
 pub struct Registry<P> {
@@ -83,6 +86,39 @@ impl<P> Registry<P> {
             .collect();
 
         ctx.shared().publish(Arc::new(PluginCatalog::new(entries)));
+    }
+
+    /// Publishes the catalog of the registered plugins' per-user settings to the context's
+    /// shared state.
+    ///
+    /// Called once after all plugins have been registered, alongside
+    /// [`Registry::publish_catalog`]. The descriptors come from the plugins' static
+    /// `USER_SETTINGS` slices, carried on each [`LoadedPlugin`], so the catalog cannot drift
+    /// from the plugins that are actually loaded; a slice whose specs spell a plugin name other
+    /// than the one that carries them produces a warning naming both.
+    /// Publishes the catalog of the registered plugins' per-user settings to the context's
+    /// shared state.
+    ///
+    /// Called once after all plugins have been registered, alongside
+    /// [`Registry::publish_catalog`]. The descriptors come from the plugins' static
+    /// `USER_SETTINGS` slices, carried on each [`LoadedPlugin`], so the catalog cannot drift
+    /// from the plugins that are actually loaded; a slice whose specs spell a plugin name other
+    /// than the one that carries them produces a warning naming both.
+    pub fn publish_user_settings_catalog(&self, ctx: &Context) {
+        let catalog = UserSettingsCatalog::new(
+            self.plugins
+                .iter()
+                .map(|plugin| (plugin.name, plugin.user_settings)),
+        );
+
+        if !catalog.all().is_empty() {
+            debug!(
+                zeta.user_setting.count = catalog.all().len(),
+                "registered per-user settings"
+            );
+        }
+
+        ctx.shared().publish(Arc::new(catalog));
     }
 
     /// Returns the number of plugins that were successfully initialized.
@@ -156,7 +192,7 @@ where
 mod tests {
     use super::*;
     use zeta_plugin::{CommandSpec, Plugin, Registered};
-    use zeta_test_support::{RecordingPlugin, publish_recording, test_context};
+    use zeta_test_support::{RecordingPlugin, assert_empty, publish_recording, test_context};
 
     /// A one-plugin set mirroring the facade's generated enum.
     enum TestPlugins {
@@ -264,6 +300,25 @@ mod tests {
             catalog.entries[0].commands,
             [CommandSpec::new(".recording", "record a message")]
         );
+    }
+
+    #[tokio::test]
+    async fn publish_user_settings_catalog_collects_the_declared_descriptors() {
+        let ctx = test_context();
+        publish_recording(&ctx);
+        let mut registry = Registry::<TestPlugins>::new();
+
+        registry.register(&ctx, RecordingPlugin::NAME, None);
+        registry.publish_user_settings_catalog(&ctx);
+
+        // The recording plugin declares no per-user settings, so the catalog is published
+        // empty rather than absent: `.settings` can always rely on the handle existing.
+        let catalog = ctx
+            .shared()
+            .get::<UserSettingsCatalog>()
+            .expect("the catalog should be published");
+
+        assert_empty!(catalog.all());
     }
 
     /// The `LoadedPlugin` envelope carries the name and subscriptions the runtime routes with.

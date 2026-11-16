@@ -10,17 +10,26 @@
 /// misconfigured sqlx build.
 #[must_use]
 pub fn test_context() -> zeta_plugin::Context {
-    let context = zeta_plugin::Context::new(zeta_plugin::config::HostConfig::default());
     #[cfg(feature = "database")]
-    let context = context.with_database({
+    {
         use sqlx::postgres::PgPoolOptions;
 
-        PgPoolOptions::new()
+        let db = PgPoolOptions::new()
             .connect_lazy("postgresql://invalid/zeta_test")
-            .expect("lazy database pool")
-    });
+            .expect("lazy database pool");
+        let context = zeta_plugin::Context::new(zeta_plugin::config::HostConfig::default());
 
-    context
+        // The account service is attached like the host attaches it, so plugins that resolve
+        // per-user settings run the same in tests.
+        let context = context.with_database(db.clone());
+
+        context.with_accounts(std::sync::Arc::new(zeta_plugin::accounts::Accounts::new(
+            db,
+        )))
+    }
+
+    #[cfg(not(feature = "database"))]
+    zeta_plugin::Context::new(zeta_plugin::config::HostConfig::default())
 }
 
 /// Builds an IRC client on the `irc` crate's mock connection, so a test needs no server.

@@ -73,6 +73,10 @@ pub(super) fn render(plugin: &Plugin, inherent: &syn::ItemImpl) -> TokenStream {
 
     let constants = command_constants(plugin);
     let registrations = registrations(plugin);
+    let user_settings = plugin
+        .user_settings
+        .clone()
+        .map_or_else(|| quote!(&[]), |specs| quote!(#specs));
     let constructor_tail = plugin.constructor.as_ref().map_or_else(
         || {
             quote!(::core::result::Result::Ok(
@@ -108,6 +112,8 @@ pub(super) fn render(plugin: &Plugin, inherent: &syn::ItemImpl) -> TokenStream {
         impl ::zeta_plugin::Registered for #self_ty {
             const NAME: &'static str = #name;
             type Settings = #settings;
+            const USER_SETTINGS: &'static [::zeta_plugin::accounts::settings::UserSettingSpec] =
+                #user_settings;
 
             #[allow(unused_variables)]
             fn new(

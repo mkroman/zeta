@@ -30,6 +30,17 @@ pub trait Registered: Plugin + Sized + 'static {
     /// access other plugins' configuration.
     type Settings: Default + DeserializeOwned;
 
+    /// The per-user settings the plugin offers, as a static descriptor slice.
+    ///
+    /// The `#[plugin]` attribute macro sets it from its `user_settings = SLICE` argument,
+    /// defaulting to an empty slice. The runtime collects the loaded plugins' slices into the
+    /// [`UserSettingsCatalog`](crate::accounts::UserSettingsCatalog) published to the shared
+    /// state, and users change the values through the `.settings` command; the plugin itself
+    /// reads them through [`Context::accounts`](crate::Context::accounts) by these same
+    /// descriptors. Each slice must spell its own plugin's [`Registered::NAME`] in its specs'
+    /// `plugin` field — the runtime warns when the two disagree.
+    const USER_SETTINGS: &'static [crate::accounts::settings::UserSettingSpec] = &[];
+
     /// The constructor for a new plugin.
     ///
     /// `settings` holds the plugin's own configuration section, deserialized from

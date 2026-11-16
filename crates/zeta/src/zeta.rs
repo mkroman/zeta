@@ -70,7 +70,15 @@ impl Zeta {
         let plugins = config.take_plugins();
         let context = Context::new(zeta_plugin::config::HostConfig::from(&config));
         #[cfg(feature = "database")]
-        let context = context.with_database(db);
+        let context = {
+            let context = context.with_database(db.clone());
+
+            // The account service (identity tracking + per-user settings) shares the pool and
+            // its settings cache spans the plugins, so a value changed through the `.settings`
+            // command is visible to every reader.
+            let accounts = Arc::new(zeta_plugin::accounts::Accounts::new(db));
+            context.with_accounts(accounts)
+        };
         let context = Arc::new(context);
 
         // The shared mirror is published before any plugin is registered, so the plugins that
@@ -89,6 +97,7 @@ impl Zeta {
         let mut registry = Registry::new();
         plugins::register_bundled_plugins(&mut registry, &context, &plugins);
         registry.publish_catalog(&context);
+        registry.publish_user_settings_catalog(&context);
 
         let failed = registry.failed_plugin_names().collect::<Vec<_>>();
 
@@ -167,11 +176,17 @@ impl Zeta {
                 .await
                 .map_err(Error::IrcClient)?;
 
-            // Request the IRCv3 message tags so servers attach tags such as `msgid` to delivered
-            // messages. A server that does not support `message-tags` answers with a `NAK`, which
-            // is harmless; registration continues without tags.
+            // Request the IRCv3 capabilities the bot runs on: message tags so servers attach
+            // tags such as `msgid` and `account` to delivered messages, and `account-tag` so
+            // the `account` tag reaches every message from a logged-in user (the account
+            // subsystem identifies users with it). A server that supports neither answers with
+            // a `NAK`, which is harmless; registration continues without them, and users then
+            // fall back to hostmask identities.
             client
-                .send_cap_req(&[Capability::Custom("message-tags")])
+                .send_cap_req(&[
+                    Capability::Custom("message-tags"),
+                    Capability::Custom("account-tag"),
+                ])
                 .map_err(Error::IrcRegistration)?;
 
             client.identify().map_err(Error::IrcRegistration)?;

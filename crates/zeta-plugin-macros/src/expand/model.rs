@@ -5,7 +5,7 @@
 
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
-use syn::{Ident, Type};
+use syn::{Expr, Ident, Type};
 
 use crate::args::{CommandArgs, UrlsArgs};
 
@@ -19,6 +19,8 @@ pub(super) struct Plugin {
     pub(super) urls: Option<UrlsArgs>,
     /// Whether every channel message is received.
     pub(super) messages: bool,
+    /// The per-user setting descriptors, from `user_settings = EXPR`; empty when absent.
+    pub(super) user_settings: Option<Expr>,
     /// The inherent constructor, when the impl block declared one.
     pub(super) constructor: Option<Constructor>,
     /// The `#[command]` methods, in declaration order.

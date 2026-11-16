@@ -27,6 +27,8 @@ pub struct LoadedPlugin<P> {
     pub plugin: P,
     /// The events the plugin registered interest in during construction.
     pub subscriptions: Subscriptions,
+    /// The per-user settings the plugin declared, taken from [`Registered::USER_SETTINGS`].
+    pub user_settings: &'static [crate::accounts::settings::UserSettingSpec],
 }
 
 // Manual implementation without a `P: Debug` bound: the plugin's own internals are not part of
@@ -50,6 +52,7 @@ impl<P> LoadedPlugin<P> {
             name: self.name,
             plugin: map(self.plugin),
             subscriptions: self.subscriptions,
+            user_settings: self.user_settings,
         }
     }
 }
@@ -77,6 +80,7 @@ where
             name: P::NAME,
             plugin,
             subscriptions,
+            user_settings: P::USER_SETTINGS,
         })
     }
 }

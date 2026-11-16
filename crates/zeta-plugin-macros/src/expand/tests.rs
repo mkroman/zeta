@@ -9,6 +9,7 @@ fn plugin_args() -> PluginArgs {
         settings: None,
         urls: None,
         messages: false,
+        user_settings: None,
     }
 }
 

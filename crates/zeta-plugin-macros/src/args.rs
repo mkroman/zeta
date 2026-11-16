@@ -8,7 +8,7 @@ use syn::parse::{Parse, ParseStream};
 use syn::{Expr, Ident, LitStr, Token, Type};
 
 /// The options `#[plugin(...)]` accepts, for the unknown-option diagnostic.
-const PLUGIN_OPTIONS: &[&str] = &["name", "settings", "urls", "messages"];
+const PLUGIN_OPTIONS: &[&str] = &["name", "settings", "urls", "messages", "user_settings"];
 
 /// The options `#[command(...)]` accepts, for the unknown-option diagnostic.
 const COMMAND_OPTIONS: &[&str] = &[
@@ -80,6 +80,8 @@ pub(crate) struct PluginArgs {
     pub urls: Option<UrlsArgs>,
     /// Whether every channel message is received, from `messages`.
     pub messages: bool,
+    /// The plugin's per-user setting descriptors, from `user_settings = EXPR`.
+    pub user_settings: Option<Expr>,
 }
 
 /// The `urls(...)` container argument.
@@ -97,6 +99,7 @@ impl Parse for PluginArgs {
         let mut settings: Option<Type> = None;
         let mut urls: Option<UrlsArgs> = None;
         let mut messages = false;
+        let mut user_settings: Option<Expr> = None;
 
         while !input.is_empty() {
             let ident: Ident = input.parse()?;
@@ -129,6 +132,10 @@ impl Parse for PluginArgs {
                     set_once(&mut urls, value, &ident)?;
                 }
                 "messages" => set_flag(&mut messages, &ident)?,
+                "user_settings" => {
+                    let value: Expr = parse_value(input)?;
+                    set_once(&mut user_settings, value, &ident)?;
+                }
                 _ => return Err(unknown_option(&ident, "plugin attribute", PLUGIN_OPTIONS)),
             }
 
@@ -147,6 +154,7 @@ impl Parse for PluginArgs {
             settings,
             urls,
             messages,
+            user_settings,
         })
     }
 }
@@ -259,14 +267,17 @@ mod tests {
 
     #[test]
     fn parses_every_plugin_argument() {
-        let args: PluginArgs =
-            syn::parse_str("name = \"dig\", settings = Settings, urls(hosts = HOSTS), messages")
-                .expect("the arguments should parse");
+        let args: PluginArgs = syn::parse_str(
+            "name = \"dig\", settings = Settings, urls(hosts = HOSTS), messages, \
+             user_settings = SPECS",
+        )
+        .expect("the arguments should parse");
 
         assert_eq!(args.name.value(), "dig");
         assert!(args.settings.is_some());
         assert!(matches!(args.urls, Some(UrlsArgs::Hosts(_))));
         assert!(args.messages);
+        assert!(args.user_settings.is_some());
     }
 
     #[test]
