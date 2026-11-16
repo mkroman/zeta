@@ -9,8 +9,14 @@ minimum_release_age = "7d"
 # Versions are pinned exactly, so the version-list cache buys nothing here.
 use_versions_host = false
 
+[tool_alias]
+# `nextest` installs from the nextest release repository, not the aqua registry.
+nextest = "github:nextest-rs/nextest"
+
 [tools]
 actionlint = "1.7.12"
+# Pinned, not floating: 0.9.125–0.9.149 carry GHSA-vc25-qg58-w57c.
+nextest = { version = "0.9.152", version_prefix = "cargo-nextest-" }
 shellcheck = "0.11.0"
 
 [tasks.fmt]
