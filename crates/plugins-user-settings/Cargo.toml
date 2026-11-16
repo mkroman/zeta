@@ -1,0 +1,21 @@
+[package]
+name = "plugins-user-settings"
+version = "0.0.0"
+rust-version = "1.100"
+edition = "2024"
+description = "The user-settings plugin for the zeta IRC bot."
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+clap.workspace = true
+serde.workspace = true
+tracing.workspace = true
+zeta-plugin = { workspace = true, features = ["database"] }
+zeta-utils.workspace = true
+
+[dev-dependencies]
+zeta-test-support = { workspace = true, features = ["context"] }
+
+[lints]
+workspace = true

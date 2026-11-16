@@ -16,18 +16,20 @@ mod tests;
 use std::fmt;
 use std::sync::Arc;
 
-use irc::client::prelude::{Capability, Client};
 use tracing::{Instrument, debug, info, warn};
 
 use crate::Error;
 use crate::config::Config;
 use crate::consts::{QUIT_FLUSH_DELAY, SHUTDOWN_GRACE, STARTUP_GRACE};
 use zeta_plugin::Context;
+#[cfg(feature = "database")]
+use zeta_plugin::accounts::Accounts;
+
 use zeta_plugin_runtime::{PluginRuntime, Registry};
 
 use plugins::BundledPlugin;
 
-use self::connection::{connect_span, dispatch_messages, drive_outgoing};
+use self::connection::{connect, connect_span, dispatch_messages};
 #[cfg(feature = "mirror")]
 use self::mirror::start_mirror;
 use self::signal::{exit_on_second_signal, note_signal, shutdown_signal};
@@ -76,7 +78,7 @@ impl Zeta {
             // The account service (identity tracking + per-user settings) shares the pool and
             // its settings cache spans the plugins, so a value changed through the `.settings`
             // command is visible to every reader.
-            let accounts = Arc::new(zeta_plugin::accounts::Accounts::new(db));
+            let accounts = Arc::new(Accounts::new(db));
             context.with_accounts(accounts)
         };
         let context = Arc::new(context);
@@ -168,39 +170,13 @@ impl Zeta {
         #[cfg(feature = "mirror")]
         start_mirror(self.context.shared());
 
-        // The connection setup — DNS, TCP/TLS, capability negotiation and registration — gets one
-        // bounded `irc.connect` span. The connection itself has no span; the dispatcher and every
-        // reply open their own short spans, so nothing hangs from a never-closing root.
-        let (client, mut stream, mut outgoing) = async {
-            let mut client = Client::from_config((&self.config.irc).into())
-                .await
-                .map_err(Error::IrcClient)?;
-
-            // Request the IRCv3 capabilities the bot runs on: message tags so servers attach
-            // tags such as `msgid` and `account` to delivered messages, and `account-tag` so
-            // the `account` tag reaches every message from a logged-in user (the account
-            // subsystem identifies users with it). A server that supports neither answers with
-            // a `NAK`, which is harmless; registration continues without them, and users then
-            // fall back to hostmask identities.
-            client
-                .send_cap_req(&[
-                    Capability::Custom("message-tags"),
-                    Capability::Custom("account-tag"),
-                ])
-                .map_err(Error::IrcRegistration)?;
-
-            client.identify().map_err(Error::IrcRegistration)?;
-
-            let outgoing = drive_outgoing(&mut client);
-
-            let stream = client.stream()?;
-
-            Ok::<_, Error>((client, stream, outgoing))
-        }
-        .instrument(connect_span(&self.config.irc))
-        .await?;
+        let (client, mut stream, mut outgoing) = connect(&self.config.irc)
+            .instrument(connect_span(&self.config.irc))
+            .await?;
 
         let client = Arc::new(client);
+
+        spawn_accounts_flush(&self.context);
 
         // Each plugin gets its own long-lived task with a bounded mailbox, so a slow or failing
         // plugin cannot block the IRC connection or the other plugins; a full mailbox sheds
@@ -238,6 +214,13 @@ impl Zeta {
         // until the stream ends, the write path stops, or a shutdown signal arrives. A signal
         // during the startup wait skips dispatch and goes straight to the shutdown below.
         if !shutting_down {
+            #[cfg(feature = "database")]
+            let accounts = Some(Arc::clone(self.context.accounts()));
+
+            #[cfg(feature = "database")]
+            let dispatch = dispatch_messages(&mut stream, &mut runtime, accounts.as_ref());
+
+            #[cfg(not(feature = "database"))]
             let dispatch = dispatch_messages(&mut stream, &mut runtime);
 
             tokio::select! {
@@ -321,4 +304,18 @@ impl Zeta {
 
         dispatch_error.map_or_else(|| Ok(()), Err)
     }
+}
+
+/// Spawns the account subsystem's flush task: the sessions the tracker marked dirty (an
+/// account or hostmask that changed) move to the database on its interval, while the tracker
+/// itself sees every incoming message in the dispatch loop and touches no database there.
+#[cfg(feature = "database")]
+fn spawn_accounts_flush(context: &Context) {
+    tokio::spawn(Accounts::run_flush(Arc::clone(context.accounts())));
+}
+
+/// Nothing to spawn without the account subsystem.
+#[cfg(not(feature = "database"))]
+fn spawn_accounts_flush(context: &Context) {
+    let _ = context;
 }

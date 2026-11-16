@@ -3587,6 +3587,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugins-user-settings"
+version = "0.0.0"
+dependencies = [
+ "clap",
+ "serde",
+ "tracing",
+ "zeta-plugin",
+ "zeta-test-support",
+ "zeta-utils",
+]
+
+[[package]]
 name = "plugins-youtube"
 version = "0.0.0"
 dependencies = [
@@ -6253,6 +6265,7 @@ dependencies = [
  "tracing",
  "url",
  "wildmatch",
+ "zeta-cache",
  "zeta-http",
  "zeta-irc",
  "zeta-plugin-macros",

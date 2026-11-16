@@ -96,14 +96,6 @@ impl<P> Registry<P> {
     /// `USER_SETTINGS` slices, carried on each [`LoadedPlugin`], so the catalog cannot drift
     /// from the plugins that are actually loaded; a slice whose specs spell a plugin name other
     /// than the one that carries them produces a warning naming both.
-    /// Publishes the catalog of the registered plugins' per-user settings to the context's
-    /// shared state.
-    ///
-    /// Called once after all plugins have been registered, alongside
-    /// [`Registry::publish_catalog`]. The descriptors come from the plugins' static
-    /// `USER_SETTINGS` slices, carried on each [`LoadedPlugin`], so the catalog cannot drift
-    /// from the plugins that are actually loaded; a slice whose specs spell a plugin name other
-    /// than the one that carries them produces a warning naming both.
     pub fn publish_user_settings_catalog(&self, ctx: &Context) {
         let catalog = UserSettingsCatalog::new(
             self.plugins

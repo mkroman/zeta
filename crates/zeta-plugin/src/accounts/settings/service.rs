@@ -99,10 +99,6 @@ impl UserSettings {
         identity: &UserIdentity,
         spec: &UserSettingSpec,
     ) -> Result<Option<String>, DbError> {
-        // Every settings touch records where the identity was seen from. The observation is
-        // spawned: tracking must be complete, but never add latency to a cached read.
-        self.observe(identity);
-
         let key = CacheKey::new(identity, spec);
 
         self.cache
@@ -112,21 +108,6 @@ impl UserSettings {
                     .await
             })
             .await
-    }
-
-    /// Records that `identity` was seen from its hostmask, without blocking the caller.
-    fn observe(&self, identity: &UserIdentity) {
-        let repository = Arc::clone(&self.repository);
-        let (key, hostmask) = (identity.key().to_owned(), identity.hostmask().to_owned());
-
-        tokio::spawn(async move {
-            if let Err(error) = repository.observe_hostmask(&key, &hostmask).await {
-                tracing::debug!(
-                    exception.message = %crate::Chain(&error),
-                    "could not record an observed hostmask"
-                );
-            }
-        });
     }
 
     /// Returns the stored value of the setting `spec` for `identity`, canonicalized against the
@@ -153,8 +134,7 @@ impl UserSettings {
     /// the user has not set one.
     ///
     /// The one call most consumers want: stored canonical value, else the descriptor's default,
-    /// else [`None`] when the setting's unset behavior is not a stored value at all. The hostmask
-    /// observation rides along like on every read.
+    /// else [`None`] when the setting's unset behavior is not a stored value at all.
     ///
     /// # Errors
     ///
@@ -184,7 +164,6 @@ impl UserSettings {
         spec: &UserSettingSpec,
         value: &'static str,
     ) -> Result<(), DbError> {
-        self.observe(identity);
         self.repository
             .store_setting(identity.key(), spec.plugin, spec.key, value)
             .await?;
@@ -216,9 +195,7 @@ impl UserSettings {
 
 #[cfg(test)]
 mod tests {
-    use crate::accounts::hostmasks::ObservedHostmask;
     use crate::accounts::settings::spec::{UserSettingKind, UserSettingSpec};
-    use zeta_test_support::assert_empty;
 
     use super::*;
 
@@ -230,16 +207,16 @@ mod tests {
         default: Some("DE"),
     };
 
-    /// The identity of `nick!user@host`, optionally logged in as an account.
-    fn identity(account: Option<&str>) -> UserIdentity {
+    /// The identity of the account `name`, connecting from `nick!user@host`.
+    fn identity(account: &str) -> UserIdentity {
         UserIdentity::from_parts(account, crate::event::Sender::new("nick", "user", "host"))
     }
 
     #[sqlx::test(migrator = "zeta_test_support::MIGRATOR")]
     async fn set_read_resolved_round_trips_per_identity(db: sqlx::PgPool) {
         let settings = crate::accounts::Accounts::new(db).settings().clone();
-        let alice = identity(Some("alice"));
-        let bob = identity(None);
+        let alice = identity("alice");
+        let bob = identity("unset");
 
         assert_eq!(
             settings.resolved(&alice, &ACCENT).await.unwrap(),
@@ -265,25 +242,25 @@ mod tests {
     }
 
     #[sqlx::test(migrator = "zeta_test_support::MIGRATOR")]
-    async fn identities_are_case_insensitive_but_kind_prefixed(db: sqlx::PgPool) {
+    async fn identities_are_case_insensitive(db: sqlx::PgPool) {
         let settings = crate::accounts::Accounts::new(db).settings().clone();
 
         settings
-            .set(&identity(Some("Alice")), &ACCENT, "DA")
+            .set(&identity("Alice"), &ACCENT, "DA")
             .await
             .unwrap();
         assert_eq!(
-            settings
-                .read(&identity(Some("alice")), &ACCENT)
-                .await
-                .unwrap(),
+            settings.read(&identity("alice"), &ACCENT).await.unwrap(),
             Some("DA"),
             "account keys normalize their case, like the services that issue them"
         );
 
-        settings.set(&identity(None), &ACCENT, "DE").await.unwrap();
+        settings
+            .set(&identity("unset"), &ACCENT, "DE")
+            .await
+            .unwrap();
         assert_eq!(
-            settings.read(&identity(None), &ACCENT).await.unwrap(),
+            settings.read(&identity("unset"), &ACCENT).await.unwrap(),
             Some("DE"),
             "hostmask fallback identities normalize their case"
         );
@@ -292,12 +269,15 @@ mod tests {
     #[sqlx::test(migrator = "zeta_test_support::MIGRATOR")]
     async fn a_write_is_visible_through_the_cache_immediately(db: sqlx::PgPool) {
         let settings = crate::accounts::Accounts::new(db).settings().clone();
-        let user = identity(Some("alice"));
+        let user = identity("alice");
 
         // Populate the cache both ways: a stored value and a cached miss.
         settings.set(&user, &ACCENT, "DA").await.unwrap();
         assert_eq!(settings.read(&user, &ACCENT).await.unwrap(), Some("DA"));
-        assert_eq!(settings.read(&identity(None), &ACCENT).await.unwrap(), None);
+        assert_eq!(
+            settings.read(&identity("unset"), &ACCENT).await.unwrap(),
+            None
+        );
 
         // The write path invalidates what the reads cached.
         settings.set(&user, &ACCENT, "DE").await.unwrap();
@@ -307,9 +287,15 @@ mod tests {
         assert_eq!(settings.read(&user, &ACCENT).await.unwrap(), None);
 
         // The previously-cached miss sees a set that happened after it.
-        settings.set(&identity(None), &ACCENT, "DA").await.unwrap();
+        settings
+            .set(&identity("unset"), &ACCENT, "DA")
+            .await
+            .unwrap();
         assert_eq!(
-            settings.resolved(&identity(None), &ACCENT).await.unwrap(),
+            settings
+                .resolved(&identity("unset"), &ACCENT)
+                .await
+                .unwrap(),
             Some("DA")
         );
     }
@@ -319,7 +305,7 @@ mod tests {
         let settings = crate::accounts::Accounts::new(db.clone())
             .settings()
             .clone();
-        let user = identity(Some("alice"));
+        let user = identity("alice");
 
         settings.set(&user, &ACCENT, "DA").await.unwrap();
         assert_eq!(settings.read(&user, &ACCENT).await.unwrap(), Some("DA"));
@@ -332,80 +318,6 @@ mod tests {
             Some("DA"),
             "the cached value is served without the database"
         );
-        assert!(
-            settings
-                .read(&identity(Some("nobody")), &ACCENT)
-                .await
-                .is_err()
-        );
-    }
-
-    #[sqlx::test(migrator = "zeta_test_support::MIGRATOR")]
-    async fn reads_track_the_hostmasks_the_identity_is_seen_from(db: sqlx::PgPool) {
-        let accounts = crate::accounts::Accounts::new(db);
-        let settings = accounts.settings().clone();
-
-        settings
-            .read(&identity(Some("alice")), &ACCENT)
-            .await
-            .unwrap();
-
-        // The observations are spawned, so the test polls briefly for them to land.
-        let observed = wait_for_hostmasks(&accounts, &identity(Some("alice")), 1).await;
-        assert_eq!(observed[0].hostmask, "nick!user@host");
-        assert_eq!(
-            observed[0].first_seen, observed[0].last_seen,
-            "seen once so far"
-        );
-
-        // A later read from another host adds a second observation; the first one stays.
-        let other_host = UserIdentity::from_parts(
-            Some("alice"),
-            crate::event::Sender::new("nick", "user", "other.host"),
-        );
-        settings.read(&other_host, &ACCENT).await.unwrap();
-
-        let observed = wait_for_hostmasks(&accounts, &identity(Some("alice")), 2).await;
-        assert_eq!(
-            observed[0].hostmask, "nick!user@other.host",
-            "most recent first"
-        );
-
-        // Another identity has no observations of its own.
-        let untracked = accounts
-            .hostmasks(&identity(None))
-            .await
-            .expect("the observations load");
-        assert_empty!(untracked);
-    }
-
-    /// Polls until `identity` has `expected` observed hostmasks, returning them.
-    ///
-    /// The observations are spawned fire-and-forget, so a test that asserts on them waits for
-    /// the write to land instead of sleeping a fixed time.
-    async fn wait_for_hostmasks(
-        accounts: &crate::accounts::Accounts,
-        identity: &UserIdentity,
-        expected: usize,
-    ) -> Vec<ObservedHostmask> {
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
-
-        loop {
-            let observed = accounts
-                .hostmasks(identity)
-                .await
-                .expect("the observations load");
-
-            if observed.len() >= expected {
-                return observed;
-            }
-
-            assert!(
-                tokio::time::Instant::now() < deadline,
-                "the observations never landed: {}",
-                observed.len()
-            );
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
+        assert!(settings.read(&identity("nobody"), &ACCENT).await.is_err());
     }
 }

@@ -123,6 +123,41 @@ impl AccountRepository {
         Ok(())
     }
 
+    /// Records `batch` of `(identity, hostmask)` observations in one statement, refreshing
+    /// `last_seen` per row.
+    ///
+    /// `first_seen` is set on the first observation and never moves.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DbError`] if the upsert fails; the caller keeps the batch dirty and retries it
+    /// whole.
+    #[instrument_database(operation = "INSERT", collection = "user_hostmasks")]
+    pub(crate) async fn observe_hostmasks(
+        &self,
+        batch: &[(String, String)],
+    ) -> Result<(), DbError> {
+        let (identities, hostmasks): (Vec<&str>, Vec<&str>) = batch
+            .iter()
+            .map(|(identity, hostmask)| (identity.as_str(), hostmask.as_str()))
+            .unzip();
+
+        sqlx::query(
+            "INSERT INTO user_hostmasks (identity, hostmask)
+             SELECT identity, hostmask
+             FROM unnest($1::text[], $2::text[]) AS observed(identity, hostmask)
+             ON CONFLICT (identity, hostmask)
+             DO UPDATE SET last_seen = now()",
+        )
+        .bind(&identities)
+        .bind(&hostmasks)
+        .execute(&self.db)
+        .await
+        .map_err(|error| DbError::insert("observed hostmask", error))?;
+
+        Ok(())
+    }
+
     /// Returns the hostmasks `identity` has been seen from, most recently used first.
     ///
     /// # Errors

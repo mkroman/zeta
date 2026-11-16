@@ -1,8 +1,8 @@
 -- The per-user settings store: one row per identity, plugin, and setting.
 --
--- The identity is the stable string the settings follow: the IRCv3 `account` tag (the services
--- account the user is logged into) when the network reports one, else the lowercased
--- `user@host`. Values are opaque strings validated against the descriptors each plugin declares.
+-- The identity is the IRCv3 services account the user is logged into, lowercased: users who
+-- have not identified have no identity, and no settings. Values are opaque strings validated
+-- against the descriptors each plugin declares.
 CREATE TABLE user_settings (
     identity TEXT NOT NULL,
     plugin TEXT NOT NULL,
@@ -14,8 +14,8 @@ CREATE TABLE user_settings (
 );
 
 -- The hostmasks each identity has been seen from, so operators can audit which hosts used an
--- account-backed identity. One row per (identity, hostmask); `last_seen` moves on every
--- observation, `first_seen` never does.
+-- account. One row per (identity, hostmask); `last_seen` moves when the tracker observes the
+-- account from a new host, `first_seen` never does.
 CREATE TABLE user_hostmasks (
     identity TEXT NOT NULL,
     hostmask TEXT NOT NULL,
