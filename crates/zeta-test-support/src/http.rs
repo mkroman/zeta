@@ -1,9 +1,9 @@
 //! HTTP transport helpers: connection-refused and timeout errors, their redaction assertions,
-//! and the wiremock servers client tests run against.
+//! the API-error fixture, and the wiremock servers client tests run against.
 //!
 //! [`refused_address`] and the redaction assertions are always available: client crates assert
-//! on their own error wrappers without needing a server. The request helpers, the servers, and
-//! the re-exported [`wiremock`] crate need the `http` feature.
+//! on their own error wrappers without needing a server. The request helpers, the API-error
+//! fixture, the servers, and the re-exported [`wiremock`] crate need the `http` feature.
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 #[cfg(feature = "http")]
@@ -58,6 +58,33 @@ pub async fn refused_get(query: &str) -> (reqwest::Error, SocketAddr) {
     assert!(error.url().is_some(), "reqwest attaches the request url");
 
     (error, address)
+}
+
+/// Builds a deterministic API failure from a request that never leaves the machine: reqwest
+/// cannot resolve the relative URL, so building the request fails before it is sent.
+///
+/// Reply-mapper tests use it to construct any error `E: From<ApiError>` — usually the plugin's
+/// own error — without a server. The rendering is reply-grade: it names the failure, not the
+/// URL, and carries no response body.
+///
+/// # Panics
+///
+/// Panics if reqwest accepts the relative URL, which would mean the fixture no longer fails
+/// deterministically.
+#[cfg(feature = "http")]
+#[must_use]
+pub fn api_error<E>() -> E
+where
+    E: From<zeta_http::ApiError>,
+{
+    let error = reqwest::Client::new()
+        .get("not a url")
+        .build()
+        .expect_err("a relative URL cannot be built into a request");
+
+    E::from(zeta_http::ApiError::from(zeta_http::RequestError::from(
+        error,
+    )))
 }
 
 /// Sends a GET with a credential-looking query against a wiremock server that answers only
@@ -204,6 +231,16 @@ mod tests {
         );
         assert_eq!(address.ip().to_string(), "127.0.0.1");
         assert_eq!(address.port(), 0);
+    }
+
+    #[test]
+    fn api_error_is_a_request_failure_without_the_url() {
+        let error: zeta_http::ApiError = api_error();
+        let message = error.to_string();
+
+        assert!(message.starts_with("request error"), "{message}");
+        assert!(!message.contains("not a url"), "{message}");
+        assert!(!message.contains("secret"), "{message}");
     }
 
     #[tokio::test]

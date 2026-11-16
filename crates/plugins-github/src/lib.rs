@@ -209,7 +209,7 @@ impl GitHub {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zeta_test_support::settings_tests;
+    use zeta_test_support::{api_error, settings_tests};
 
     settings_tests! {
         Settings,
@@ -222,16 +222,6 @@ mod tests {
         } assert: {
             assert_eq!(settings.token.as_deref(), Some("secret"));
         }
-    }
-
-    /// Returns an API failure for the reply-mapper tests.
-    fn api_error() -> Error {
-        let error = reqwest::Client::new()
-            .get("not a url")
-            .build()
-            .expect_err("a relative URL cannot be built into a request");
-
-        Error::Api(http::ApiError::from(RequestError::from(error)))
     }
 
     #[test]

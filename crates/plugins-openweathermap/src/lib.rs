@@ -244,7 +244,7 @@ fn format_weather(w: &WeatherResponse, units: Units) -> String {
 mod tests {
     use super::model::{Clouds, Main, Sys, WeatherDescription, Wind};
     use super::*;
-    use zeta_test_support::settings_tests;
+    use zeta_test_support::{api_error, settings_tests};
 
     /// Builds a weather response for formatting tests.
     fn test_response() -> WeatherResponse {
@@ -290,16 +290,6 @@ mod tests {
             assert_eq!(settings.language.as_deref(), Some("da"));
             assert_eq!(settings.default_location.as_deref(), Some("Copenhagen"));
         }
-    }
-
-    /// Returns an API failure for the reply-mapper tests.
-    fn api_error() -> Error {
-        let error = reqwest::Client::new()
-            .get("not a url")
-            .build()
-            .expect_err("a relative URL cannot be built into a request");
-
-        Error::Api(http::ApiError::from(http::RequestError::from(error)))
     }
 
     #[test]

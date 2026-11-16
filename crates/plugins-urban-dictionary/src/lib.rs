@@ -185,7 +185,7 @@ impl UrbanDictionary {
 mod tests {
     use super::*;
     use similar_asserts::assert_eq;
-    use zeta_test_support::settings_tests;
+    use zeta_test_support::{api_error, settings_tests};
 
     /// Builds a definition for formatting tests.
     fn test_definition() -> Definition {
@@ -213,16 +213,6 @@ mod tests {
         } assert: {
             assert_eq!(settings.max_definition_length, 100);
         }
-    }
-
-    /// Returns an API failure for the reply-mapper tests.
-    fn api_error() -> Error {
-        let error = reqwest::Client::new()
-            .get("not a url")
-            .build()
-            .expect_err("a relative URL cannot be built into a request");
-
-        Error::Api(http::ApiError::from(http::RequestError::from(error)))
     }
 
     #[test]
