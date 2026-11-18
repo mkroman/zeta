@@ -3,7 +3,7 @@
 //! The host constructs one instance over the shared pool, attaches it to the context, feeds it
 //! every incoming IRC message through [`Accounts::track`], and spawns
 //! [`Accounts::run_flush`](Self::run_flush) to move observations to the database. Clones share
-//! the same state, cache and pool, so a change written through the `.settings` command is
+//! the same state, cache and pool, so a change written through the `.set` command is
 //! visible to every reader immediately.
 
 use std::collections::HashMap;

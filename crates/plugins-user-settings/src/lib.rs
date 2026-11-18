@@ -1,6 +1,6 @@
 //! List, inspect, and change per-user settings.
 //!
-//! The `.settings` command is the user-facing surface of the account subsystem's settings
+//! The `.set` command is the user-facing surface of the account subsystem's settings
 //! (`zeta_plugin::accounts::settings`): invoked bare it lists every setting the loaded plugins
 //! declared with the invoking user's current value, with a `plugin.key` it describes the
 //! setting and shows its current value, and with a value it stores (or, with `reset`, removes)
@@ -47,7 +47,7 @@ const RESET_VALUE: &str = "reset";
 #[serde(default)]
 pub struct Settings {}
 
-/// The `.settings` command arguments.
+/// The `.set` command arguments.
 #[derive(Parser, Debug)]
 pub struct Opts {
     /// the setting to view or change, as `plugin.key`
@@ -73,7 +73,7 @@ impl UserSettings {
 
     /// Lists, describes, or changes one of the invoking user's settings.
     #[command(
-        ".settings",
+        ".set",
         "List, view, and change your per-user settings",
         event,
         usage_hint = "[<plugin.key> [<value>|reset]]"
@@ -334,7 +334,7 @@ fn overview_listing(entries: &[String]) -> String {
         " ",
         MAX_LISTING_LENGTH,
         reserved,
-        |dropped| format!(" (+{dropped} more; .settings <plugin.key> shows each)"),
+        |dropped| format!(" (+{dropped} more; .set <plugin.key> shows each)"),
     );
 
     listing

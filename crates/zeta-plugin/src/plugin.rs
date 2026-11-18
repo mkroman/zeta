@@ -35,7 +35,7 @@ pub trait Registered: Plugin + Sized + 'static {
     /// The `#[plugin]` attribute macro sets it from its `user_settings = SLICE` argument,
     /// defaulting to an empty slice. The runtime collects the loaded plugins' slices into the
     /// [`UserSettingsCatalog`](crate::accounts::UserSettingsCatalog) published to the shared
-    /// state, and users change the values through the `.settings` command; the plugin itself
+    /// state, and users change the values through the `.set` command; the plugin itself
     /// reads them through [`Context::accounts`](crate::Context::accounts) by these same
     /// descriptors. Each slice must spell its own plugin's [`Registered::NAME`] in its specs'
     /// `plugin` field — the runtime warns when the two disagree.

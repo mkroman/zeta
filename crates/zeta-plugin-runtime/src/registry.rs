@@ -304,7 +304,7 @@ mod tests {
         registry.publish_user_settings_catalog(&ctx);
 
         // The recording plugin declares no per-user settings, so the catalog is published
-        // empty rather than absent: `.settings` can always rely on the handle existing.
+        // empty rather than absent: `.set` can always rely on the handle existing.
         let catalog = ctx
             .shared()
             .get::<UserSettingsCatalog>()

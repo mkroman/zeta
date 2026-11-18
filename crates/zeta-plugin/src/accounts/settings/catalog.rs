@@ -2,7 +2,7 @@
 //!
 //! The runtime builds the catalog from the registered plugins'
 //! [`Registered::USER_SETTINGS`](crate::Registered::USER_SETTINGS) once registration finishes
-//! and publishes it next to the [`PluginCatalog`](crate::PluginCatalog), so the `.settings`
+//! and publishes it next to the [`PluginCatalog`](crate::PluginCatalog), so the `.set`
 //! command lists exactly the settings of the plugins that are actually loaded.
 
 use tracing::warn;
@@ -120,7 +120,7 @@ mod tests {
         assert_eq!(
             ids,
             ["alpha.accent", "alpha.mode", "gamma.mode"],
-            "the catalog sorts before the `.settings` listing renders it"
+            "the catalog sorts before the `.set` listing renders it"
         );
 
         assert_eq!(

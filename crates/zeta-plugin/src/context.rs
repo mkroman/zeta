@@ -154,11 +154,11 @@ impl Context {
     /// Returns the account subsystem service.
     ///
     /// The service is shared by every plugin: reads and writes go through one cache, so a value
-    /// changed through the `.settings` command is visible to the next reader. Plugins resolve a
+    /// changed through the `.set` command is visible to the next reader. Plugins resolve a
     /// user's settings through
     /// [`Accounts::settings`](crate::accounts::Accounts::settings) by their own descriptors —
     /// typically cloned once at construction — and users change the values through the
-    /// `.settings` command.
+    /// `.set` command.
     ///
     /// # Panics
     ///

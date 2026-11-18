@@ -76,7 +76,7 @@ impl Zeta {
             let context = context.with_database(db.clone());
 
             // The account service (identity tracking + per-user settings) shares the pool and
-            // its settings cache spans the plugins, so a value changed through the `.settings`
+            // its settings cache spans the plugins, so a value changed through the `.set`
             // command is visible to every reader.
             let accounts = Arc::new(Accounts::new(db));
             context.with_accounts(accounts)

@@ -417,7 +417,7 @@ name = "#zeta.dev"
   # The Trustpilot domain used for review links (e.g. "dk" or "www").
   # review_domain = "dk"
 
-  # Per-user settings (`.settings`), the account subsystem's user-facing command.
+  # Per-user settings (`.set`), the account subsystem's user-facing command.
   [plugins.user_settings]
   # Enable the plugin.
   enabled = true

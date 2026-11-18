@@ -3,7 +3,7 @@
 //! A descriptor is static data: a plugin owns a `&'static [UserSettingSpec]` slice, names it in
 //! its `#[plugin(user_settings = …)]` attribute, and the runtime aggregates the loaded plugins'
 //! slices into the [`UserSettingsCatalog`](super::UserSettingsCatalog) when registration
-//! finishes. Descriptors carry no values and no secrets — only what the `.settings` command
+//! finishes. Descriptors carry no values and no secrets — only what the `.set` command
 //! needs to list, describe, and validate a setting, and what [`UserSettings`](super::UserSettings)
 //! needs to key and canonicalize the values.
 

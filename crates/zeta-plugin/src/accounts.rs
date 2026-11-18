@@ -18,7 +18,7 @@
 //!   account has been used from stay auditable without a write per message.
 //! - **Settings** — [`UserSettings`], the cached store of the per-user values plugins declared
 //!   through their `#[plugin(user_settings = …)]` descriptors. Users change them with the
-//!   `.settings` command; plugins read them with the typed `read`/`resolved` helpers, which
+//!   `.set` command; plugins read them with the typed `read`/`resolved` helpers, which
 //!   canonicalize stored values against the descriptor so consumers never see a value the
 //!   descriptor would not accept.
 
