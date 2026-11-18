@@ -314,6 +314,8 @@ pub(super) fn expand(input: &DeriveInput) -> syn::Result<TokenStream> {
         ident.span(),
     );
 
+    let field_reads = preferences.iter().map(|preference| &preference.key);
+
     Ok(quote! {
         impl ::zeta_plugin::accounts::PreferenceSet for #ident {
             fn preferences(
@@ -324,6 +326,14 @@ pub(super) fn expand(input: &DeriveInput) -> syn::Result<TokenStream> {
         }
 
         impl #ident {
+            /// References every declared field, which is what keeps the declaration struct's
+            /// fields from reading as dead code: the derive consumes them through the
+            /// descriptors and readers, never through a field access.
+            #[allow(dead_code, reason = "the fields are declarations consumed by the derive")]
+            fn __declared_fields(&self) {
+                let _ = (#(&self.#field_reads),*);
+            }
+
             #[doc = #constructor_doc]
             #[must_use]
             #vis const fn reader<'a>(
