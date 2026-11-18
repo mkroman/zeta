@@ -75,6 +75,7 @@ plugins-string-utils = { path = "crates/plugins-string-utils", default-features 
 plugins-thingiverse = { path = "crates/plugins-thingiverse", default-features = false }
 plugins-tiktok = { path = "crates/plugins-tiktok", default-features = false }
 plugins-titles = { path = "crates/plugins-titles", default-features = false }
+plugins-tldr = { path = "crates/plugins-tldr", default-features = false }
 plugins-trustpilot = { path = "crates/plugins-trustpilot", default-features = false }
 plugins-tvmaze = { path = "crates/plugins-tvmaze", default-features = false }
 plugins-twitch = { path = "crates/plugins-twitch", default-features = false }

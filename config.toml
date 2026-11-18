@@ -417,6 +417,19 @@ name = "#zeta.dev"
   # The Trustpilot domain used for review links (e.g. "dk" or "www").
   # review_domain = "dk"
 
+  # Kagi Summarize integration (`.tldr`), as the Kagi browser extension does it.
+  [plugins.tldr]
+  # Enable the plugin.
+  enabled = true
+  # The Kagi session token (the `kagi_session` cookie value). Falls back to the
+  # `KAGI_SESSION_TOKEN` environment variable when unset — the same variable the kagi plugin
+  # uses, so one token serves both.
+  # session_token = "..."
+  # The `Accept-Language` header sent with summarize requests.
+  # language = "en-US,en;q=0.9"
+  # The maximum length of a truncated summary reply, in bytes of summary text.
+  # max_summary_length = 380
+
   # Per-user preferences (`.set`), the account subsystem's user-facing command.
   [plugins.preferences]
   # Enable the plugin.
