@@ -1,14 +1,14 @@
 //! Attribute argument parsing for the [`plugin`](crate::plugin) macro.
 //!
 //! The attribute grammar is parsed by hand instead of through [`syn::Meta`]: the values of
-//! `urls(hosts = …)` and `register_if = …` are arbitrary expressions, which the `Meta` grammar
-//! cannot represent.
+//! `urls(hosts = …)` and `register_if = …` are arbitrary expressions, and `settings` and
+//! `preferences` take types, which the `Meta` grammar cannot represent.
 
 use syn::parse::{Parse, ParseStream};
 use syn::{Expr, Ident, LitStr, Token, Type};
 
 /// The options `#[plugin(...)]` accepts, for the unknown-option diagnostic.
-const PLUGIN_OPTIONS: &[&str] = &["name", "settings", "urls", "messages", "user_settings"];
+const PLUGIN_OPTIONS: &[&str] = &["name", "settings", "urls", "messages", "preferences"];
 
 /// The options `#[command(...)]` accepts, for the unknown-option diagnostic.
 const COMMAND_OPTIONS: &[&str] = &[
@@ -80,8 +80,8 @@ pub(crate) struct PluginArgs {
     pub urls: Option<UrlsArgs>,
     /// Whether every channel message is received, from `messages`.
     pub messages: bool,
-    /// The plugin's per-user setting descriptors, from `user_settings = EXPR`.
-    pub user_settings: Option<Expr>,
+    /// The plugin's per-user preferences, from `preferences = Type`.
+    pub preferences: Option<Type>,
 }
 
 /// The `urls(...)` container argument.
@@ -99,7 +99,7 @@ impl Parse for PluginArgs {
         let mut settings: Option<Type> = None;
         let mut urls: Option<UrlsArgs> = None;
         let mut messages = false;
-        let mut user_settings: Option<Expr> = None;
+        let mut preferences: Option<Type> = None;
 
         while !input.is_empty() {
             let ident: Ident = input.parse()?;
@@ -132,9 +132,9 @@ impl Parse for PluginArgs {
                     set_once(&mut urls, value, &ident)?;
                 }
                 "messages" => set_flag(&mut messages, &ident)?,
-                "user_settings" => {
-                    let value: Expr = parse_value(input)?;
-                    set_once(&mut user_settings, value, &ident)?;
+                "preferences" => {
+                    let value: Type = parse_value(input)?;
+                    set_once(&mut preferences, value, &ident)?;
                 }
                 _ => return Err(unknown_option(&ident, "plugin attribute", PLUGIN_OPTIONS)),
             }
@@ -154,7 +154,7 @@ impl Parse for PluginArgs {
             settings,
             urls,
             messages,
-            user_settings,
+            preferences,
         })
     }
 }
@@ -263,13 +263,15 @@ impl Parse for CommandArgs {
 
 #[cfg(test)]
 mod tests {
+    use quote::ToTokens;
+
     use super::*;
 
     #[test]
     fn parses_every_plugin_argument() {
         let args: PluginArgs = syn::parse_str(
             "name = \"dig\", settings = Settings, urls(hosts = HOSTS), messages, \
-             user_settings = SPECS",
+             preferences = Preferences",
         )
         .expect("the arguments should parse");
 
@@ -277,7 +279,21 @@ mod tests {
         assert!(args.settings.is_some());
         assert!(matches!(args.urls, Some(UrlsArgs::Hosts(_))));
         assert!(args.messages);
-        assert!(args.user_settings.is_some());
+        assert!(args.preferences.is_some());
+    }
+
+    #[test]
+    fn parses_a_qualified_preferences_type() {
+        let args: PluginArgs = syn::parse_str("name = \"tldr\", preferences = crate::Prefs")
+            .expect("the arguments should parse");
+
+        assert_eq!(
+            args.preferences
+                .expect("preferences should be set")
+                .to_token_stream()
+                .to_string(),
+            "crate :: Prefs"
+        );
     }
 
     #[test]
@@ -304,6 +320,7 @@ mod tests {
             "name = \"a\", settings = A, settings = B",
             "name = \"a\", urls(any), urls(any)",
             "name = \"a\", messages, messages",
+            "name = \"a\", preferences = A, preferences = B",
         ] {
             let error = syn::parse_str::<PluginArgs>(arguments)
                 .err()
