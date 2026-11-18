@@ -45,6 +45,7 @@ macro_rules! for_each_bundled_plugin {
             "ofn"               => plugins_ofn::Ofn as ofn,
             "openweathermap"    => plugins_openweathermap::OpenWeatherMap as openweathermap,
             "pornhub"           => plugins_pornhub::PornHub as pornhub,
+            "preferences"       => plugins_preferences::SetCommand as preferences,
             "reddit"            => plugins_reddit::Reddit as reddit,
             "rink"              => plugins_rink::Rink as rink,
             "rust-playground"   => plugins_rust_playground::RustPlayground as rust_playground,
@@ -58,7 +59,6 @@ macro_rules! for_each_bundled_plugin {
             "twitch"            => plugins_twitch::Twitch as twitch,
             "unwall"            => plugins_unwall::Unwall as unwall,
             "urban-dictionary"  => plugins_urban_dictionary::UrbanDictionary as urban_dictionary,
-            "user-settings"     => plugins_user_settings::UserSettings as user_settings,
             "youtube"           => plugins_youtube::YouTube as youtube,
         }
     };

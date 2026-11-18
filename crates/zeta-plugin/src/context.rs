@@ -155,10 +155,10 @@ impl Context {
     ///
     /// The service is shared by every plugin: reads and writes go through one cache, so a value
     /// changed through the `.set` command is visible to the next reader. Plugins resolve a
-    /// user's settings through
-    /// [`Accounts::settings`](crate::accounts::Accounts::settings) by their own descriptors —
-    /// typically cloned once at construction — and users change the values through the
-    /// `.set` command.
+    /// user's preferences through
+    /// [`Accounts::preferences`](crate::accounts::Accounts::preferences) by their own
+    /// descriptors — typically cloned once at construction — and users change the values
+    /// through the `.set` command.
     ///
     /// # Panics
     ///

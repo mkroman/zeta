@@ -1,9 +1,9 @@
--- The per-user settings store: one row per identity, plugin, and setting.
+-- The per-user preferences store: one row per identity, plugin, and preference.
 --
 -- The identity is the IRCv3 services account the user is logged into, lowercased: users who
--- have not identified have no identity, and no settings. Values are opaque strings validated
+-- have not identified have no identity, and no preferences. Values are opaque strings validated
 -- against the descriptors each plugin declares.
-CREATE TABLE user_settings (
+CREATE TABLE preferences (
     identity TEXT NOT NULL,
     plugin TEXT NOT NULL,
     key TEXT NOT NULL,

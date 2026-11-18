@@ -41,11 +41,8 @@ pub mod filtering;
 pub mod hostmask;
 
 #[cfg(feature = "database")]
-pub use accounts::{Accounts, ObservedHostmask, UserSettings};
-pub use accounts::{
-    UserIdentity,
-    settings::{UserSettingKind, UserSettingSpec, UserSettingsCatalog},
-};
+pub use accounts::{Accounts, ObservedHostmask, Preferences};
+pub use accounts::{PreferenceKind, PreferenceSet, PreferenceSpec, PreferenceValue, UserIdentity};
 pub use catalog::{CatalogEntry, PluginCatalog};
 pub use command::{ArgsError, ArgsMode, CommandSpec};
 pub use config::HostConfig;
@@ -67,7 +64,7 @@ pub use plugin::{Plugin, Registered};
 #[cfg(feature = "database")]
 pub use sqlx;
 pub use types::NoSettings;
-pub use zeta_plugin_macros::{instrument_database, plugin};
+pub use zeta_plugin_macros::{PreferenceSet, PreferenceValue, instrument_database, plugin};
 pub use zeta_utils::error::Chain;
 
 // Re-exported through the crate root so the code the `#[plugin]` macro generates — and plugin

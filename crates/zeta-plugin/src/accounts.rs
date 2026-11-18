@@ -16,27 +16,27 @@
 //!   from those notifications; a flush moves the sessions marked dirty — an account or hostmask
 //!   that changed — to the `user_hostmasks` table in one batched upsert, so the hosts an
 //!   account has been used from stay auditable without a write per message.
-//! - **Settings** — [`UserSettings`], the cached store of the per-user values plugins declared
-//!   through their `#[plugin(user_settings = …)]` descriptors. Users change them with the
-//!   `.set` command; plugins read them with the typed `read`/`resolved` helpers, which
-//!   canonicalize stored values against the descriptor so consumers never see a value the
-//!   descriptor would not accept.
+//! - **Preferences** — [`Preferences`], the cached store of the per-user values plugins declare
+//!   through their [`PreferenceSet`] descriptors. Users change them with the `.set` command;
+//!   plugins read them with the typed `value`/`value_or_default` helpers, which canonicalize
+//!   stored values against the descriptor so consumers never see a value the descriptor would
+//!   not accept.
 
 pub mod identity;
 
 #[cfg(feature = "database")]
 pub mod hostmasks;
+pub mod preferences;
 #[cfg(feature = "database")]
 pub mod repository;
 #[cfg(feature = "database")]
 pub mod service;
-pub mod settings;
 
 #[cfg(feature = "database")]
 pub use hostmasks::ObservedHostmask;
 pub use identity::UserIdentity;
 #[cfg(feature = "database")]
-pub use service::Accounts;
+pub use preferences::Preferences;
+pub use preferences::{PreferenceKind, PreferenceSet, PreferenceSpec, PreferenceValue};
 #[cfg(feature = "database")]
-pub use settings::UserSettings;
-pub use settings::{UserSettingKind, UserSettingSpec, UserSettingsCatalog};
+pub use service::Accounts;

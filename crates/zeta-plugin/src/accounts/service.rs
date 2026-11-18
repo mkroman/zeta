@@ -1,4 +1,4 @@
-//! The host-attached account service: session tracking and per-user settings in one place.
+//! The host-attached account service: session tracking and per-user preferences in one place.
 //!
 //! The host constructs one instance over the shared pool, attaches it to the context, feeds it
 //! every incoming IRC message through [`Accounts::track`], and spawns
@@ -17,8 +17,8 @@ use tracing::{Instrument, warn};
 
 use crate::accounts::hostmasks::ObservedHostmask;
 use crate::accounts::identity::UserIdentity;
+use crate::accounts::preferences::Preferences;
 use crate::accounts::repository::AccountRepository;
-use crate::accounts::settings::UserSettings;
 use crate::database::{Database, DbError};
 use crate::event::account;
 
@@ -44,11 +44,11 @@ struct Session {
     dirty: bool,
 }
 
-/// The account subsystem's service: session tracking and settings over the shared pool.
+/// The account subsystem's service: session tracking and preferences over the shared pool.
 #[derive(Clone)]
 pub struct Accounts {
-    /// The per-user settings facet.
-    settings: Arc<UserSettings>,
+    /// The per-user preferences facet.
+    preferences: Arc<Preferences>,
     /// The repository the tracking observations go through.
     repository: Arc<AccountRepository>,
     /// The tracked IRC sessions, keyed by lowercase nick.
@@ -73,19 +73,19 @@ impl Accounts {
         let repository = Arc::new(AccountRepository::new(db));
 
         Self {
-            settings: Arc::new(UserSettings::new(Arc::clone(&repository))),
+            preferences: Arc::new(Preferences::new(Arc::clone(&repository))),
             repository,
             sessions: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
-    /// The per-user settings facet.
+    /// The per-user preferences facet.
     ///
-    /// Plugins that resolve settings per command clone the handle once at construction —
+    /// Plugins that resolve preferences per command clone the handle once at construction —
     /// cloning shares the cache and the pool.
     #[must_use]
-    pub const fn settings(&self) -> &Arc<UserSettings> {
-        &self.settings
+    pub const fn preferences(&self) -> &Arc<Preferences> {
+        &self.preferences
     }
 
     /// Feeds one incoming IRC message to the tracker.
@@ -230,7 +230,7 @@ impl Accounts {
     /// # Errors
     ///
     /// Returns [`DbError`] when the upsert fails.
-    pub async fn observe(&self, identity: &UserIdentity) -> Result<(), DbError> {
+    pub async fn record(&self, identity: &UserIdentity) -> Result<(), DbError> {
         self.repository
             .observe_hostmask(identity.key(), identity.hostmask())
             .await

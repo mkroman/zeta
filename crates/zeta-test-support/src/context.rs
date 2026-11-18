@@ -20,7 +20,7 @@ pub fn test_context() -> zeta_plugin::Context {
         let context = zeta_plugin::Context::new(zeta_plugin::config::HostConfig::default());
 
         // The account service is attached like the host attaches it, so plugins that resolve
-        // per-user settings run the same in tests.
+        // per-user preferences run the same in tests.
         let context = context.with_database(db.clone());
 
         context.with_accounts(std::sync::Arc::new(zeta_plugin::accounts::Accounts::new(

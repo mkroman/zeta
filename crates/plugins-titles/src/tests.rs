@@ -79,6 +79,7 @@ fn catalog_with(name: &str, hosts: &'static [&'static str]) -> PluginCatalog {
         name.to_owned(),
         Vec::new(),
         UrlScope::Hosts(hosts),
+        Vec::new(),
     )])
 }
 
@@ -248,10 +249,11 @@ fn ignores_hosts_declared_in_the_catalog() {
             "imdb".to_owned(),
             Vec::new(),
             UrlScope::Hosts(&["imdb.com", "WWW.IMDB.COM"]),
+            Vec::new(),
         ),
         // Generic handlers advertise no specific hosts.
-        CatalogEntry::new("titles".to_owned(), Vec::new(), UrlScope::Any),
-        CatalogEntry::new("none".to_owned(), Vec::new(), UrlScope::None),
+        CatalogEntry::new("titles".to_owned(), Vec::new(), UrlScope::Any, Vec::new()),
+        CatalogEntry::new("none".to_owned(), Vec::new(), UrlScope::None, Vec::new()),
     ]);
     assert!(is_catalog_handled(
         &Url::parse("https://www.imdb.com/title/tt1375666").unwrap(),

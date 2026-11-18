@@ -1,47 +1,44 @@
-//! List, inspect, and change per-user settings.
+//! List, inspect, and change per-user preferences.
 //!
-//! The `.set` command is the user-facing surface of the account subsystem's settings
-//! (`zeta_plugin::accounts::settings`): invoked bare it lists every setting the loaded plugins
-//! declared with the invoking user's current value, with a `plugin.key` it describes the
-//! setting and shows its current value, and with a value it stores (or, with `reset`, removes)
-//! that user's setting.
+//! The `.set` command is the user-facing surface of the account subsystem's preference store
+//! (`zeta_plugin::accounts`): invoked bare it lists every preference the loaded plugins declared
+//! with the invoking user's current value, with a `plugin.key` it describes the preference and
+//! shows its current value, and with a value it stores (or, with `reset`, removes) that user's
+//! preference.
 //!
-//! The descriptors come from the `UserSettingsCatalog` the runtime publishes from the plugins'
-//! `#[plugin(user_settings = …)]` declarations, so the command can only ever offer the settings
-//! of the plugins that are actually loaded. The values go through the
-//! [`UserSettings`](zeta_plugin::accounts::UserSettings) facet of the shared account service,
-//! so every reader sees a write immediately.
+//! The descriptors travel in the [`PluginCatalog`] the runtime publishes from the plugins'
+//! declared `PreferenceSpec`s, so the command can only ever offer the preferences of the plugins
+//! that are actually loaded. The values go through the
+//! [`Preferences`](zeta_plugin::accounts::Preferences) facet of the shared account service, so
+//! every reader sees a write immediately.
 //!
-//! Users are identified by their IRCv3 services account: a sender who has not identified has
-//! no identity, and the command tells them so — the framework resolves the `account` tag into
-//! a [`UserIdentity`] on every event. There is nothing to configure; the plugin needs only the
+//! Users are identified by their IRCv3 services account: a sender who has not identified has no
+//! identity, and the command tells them so — the framework resolves the `account` tag into a
+//! [`UserIdentity`] on every event. There is nothing to configure; the plugin needs only the
 //! database.
-
-use std::sync::Arc;
 
 use clap::Parser;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 use zeta_utils::text::TruncatableExt;
 
-use zeta_plugin::accounts::UserIdentity;
-use zeta_plugin::accounts::UserSettings as Service;
-use zeta_plugin::accounts::settings::{UserSettingSpec, UserSettingsCatalog};
+use zeta_plugin::accounts::{PreferenceKind, PreferenceSpec, UserIdentity};
 use zeta_plugin::database::DbError;
 use zeta_plugin::irc::{
     LABELED_PREFIX_BYTES, MAX_LISTING_LENGTH, append_entries_with_more, labeled_reply,
     labeled_reply_prefix, parse_or_usage, plain_reply, send_reply,
 };
-use zeta_plugin::{ArgsMode, Chain, Client, CommandEvent, Context, ZetaError, plugin};
+use zeta_plugin::{
+    ArgsMode, Chain, Client, CommandEvent, Context, PluginCatalog, ZetaError, plugin,
+};
 
 /// The label every reply from this plugin carries.
-const LABEL: &str = "Settings";
+const LABEL: &str = "Preferences";
 
-/// The value that restores a setting's default.
+/// The value that restores a preference's default.
 const RESET_VALUE: &str = "reset";
 
-/// Settings for the user-settings plugin, from its `[plugins.user_settings]` configuration
-/// section.
+/// Settings for the preferences plugin, from its `[plugins.preferences]` configuration section.
 ///
 /// The plugin has nothing to configure.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -51,35 +48,26 @@ pub struct Settings {}
 /// The `.set` command arguments.
 #[derive(Parser, Debug)]
 pub struct Opts {
-    /// the setting to view or change, as `plugin.key`
-    setting: Option<String>,
+    /// the preference to view or change, as `plugin.key`
+    preference: Option<String>,
     /// the new value, or `reset` to restore the default
     value: Option<String>,
 }
 
-/// User settings command plugin.
-#[derive(Debug)]
-pub struct UserSettings {
-    /// The shared per-user settings facet, handed over by the host's account service.
-    settings: Arc<Service>,
-}
+/// Per-user preferences command plugin.
+#[derive(Debug, Default)]
+pub struct SetCommand;
 
-#[plugin(name = "user_settings", settings = Settings)]
-impl UserSettings {
-    fn new(ctx: &Context, _settings: &Settings) -> Result<Self, ZetaError> {
-        Ok(Self {
-            settings: Arc::clone(ctx.accounts().settings()),
-        })
-    }
-
-    /// Lists, describes, or changes one of the invoking user's settings.
+#[plugin(name = "preferences", settings = Settings)]
+impl SetCommand {
+    /// Lists, describes, or changes one of the invoking user's preferences.
     #[command(
         ".set",
-        "List, view, and change your per-user settings",
+        "List, view, and change your per-user preferences",
         event,
         usage_hint = "[<plugin.key> [<value>|reset]]"
     )]
-    async fn settings(
+    async fn set(
         &self,
         ctx: &Context,
         client: &Client,
@@ -87,13 +75,13 @@ impl UserSettings {
     ) -> Result<(), ZetaError> {
         let channel = command.channel();
         let Some(identity) = command.identity() else {
-            // Without a services account there is nothing to attach settings to.
+            // Without a services account there is nothing to attach a preference to.
             send_reply(
                 client,
                 channel,
                 labeled_reply(
                     LABEL,
-                    "identify with services (e.g. /msg nickserv identify) to use settings",
+                    "identify with services (e.g. /msg nickserv identify) to use preferences",
                 ),
             )?;
 
@@ -107,25 +95,25 @@ impl UserSettings {
             return Ok(());
         };
 
-        let Some(catalog) = ctx.shared().get::<UserSettingsCatalog>() else {
+        let Some(catalog) = ctx.shared().get::<PluginCatalog>() else {
             send_reply(
                 client,
                 channel,
-                labeled_reply(LABEL, "the settings catalog is unavailable"),
+                labeled_reply(LABEL, "the plugin catalog is unavailable"),
             )?;
 
             return Ok(());
         };
 
-        match (opts.setting.as_deref(), opts.value.as_deref()) {
-            (None, _) => self.overview(client, channel, &identity, &catalog).await?,
+        match (opts.preference.as_deref(), opts.value.as_deref()) {
+            (None, _) => {
+                overview(ctx, client, channel, &identity, &catalog).await?;
+            }
             (Some(address), None) => {
-                self.describe(client, channel, &identity, &catalog, address)
-                    .await?;
+                describe(ctx, client, channel, &identity, &catalog, address).await?;
             }
             (Some(address), Some(value)) => {
-                self.change(client, channel, &identity, &catalog, address, value)
-                    .await?;
+                change(ctx, client, channel, &identity, &catalog, address, value).await?;
             }
         }
 
@@ -133,127 +121,131 @@ impl UserSettings {
     }
 }
 
-impl UserSettings {
-    /// Replies with the overview listing: every registered setting and the user's value.
-    async fn overview(
-        &self,
-        client: &Client,
-        channel: &str,
-        identity: &UserIdentity,
-        catalog: &UserSettingsCatalog,
-    ) -> Result<(), ZetaError> {
-        let specs = catalog.all();
-        let mut entries = Vec::with_capacity(specs.len());
+/// Replies with the overview listing: every registered preference and the user's value.
+async fn overview(
+    ctx: &Context,
+    client: &Client,
+    channel: &str,
+    identity: &UserIdentity,
+    catalog: &PluginCatalog,
+) -> Result<(), ZetaError> {
+    let preferences = ctx.accounts().preferences();
+    let specs = catalog.entries.iter().flat_map(|entry| &entry.preferences);
+    let mut entries = Vec::new();
 
-        for spec in specs {
-            let current = match self.settings.get(identity, spec).await {
-                Ok(Some(value)) => value,
-                Ok(None) => default_value(spec),
-                Err(error) => {
-                    warn_load_failure(&error);
-                    default_value(spec)
-                }
-            };
-            entries.push(overview_entry(spec, &current));
-        }
-
-        send_reply(client, channel, overview_listing(&entries))?;
-
-        Ok(())
-    }
-
-    /// Replies with the description, accepted values, default, and current value of `address`.
-    async fn describe(
-        &self,
-        client: &Client,
-        channel: &str,
-        identity: &UserIdentity,
-        catalog: &UserSettingsCatalog,
-        address: &str,
-    ) -> Result<(), ZetaError> {
-        let Some(spec) = resolve(client, channel, catalog, address)? else {
-            return Ok(());
-        };
-
-        let (current, failed) = match self.settings.get(identity, spec).await {
-            Ok(Some(value)) => (value, false),
-            Ok(None) => (default_value(spec), false),
+    for spec in specs {
+        let current = match preferences.raw(identity, spec).await {
+            Ok(Some(value)) => value,
+            Ok(None) => default_value(spec),
             Err(error) => {
                 warn_load_failure(&error);
-                (default_value(spec), true)
+                default_value(spec)
             }
         };
-
-        let note = failed.then_some(" (could not load your value)");
-        let line = describe_line(spec, &current, note);
-
-        send_reply(client, channel, line)?;
-
-        Ok(())
+        entries.push(overview_entry(spec, &current));
     }
 
-    /// Stores `value` for `address`, or removes the stored value when `value` is `reset`.
-    async fn change(
-        &self,
-        client: &Client,
-        channel: &str,
-        identity: &UserIdentity,
-        catalog: &UserSettingsCatalog,
-        address: &str,
-        value: &str,
-    ) -> Result<(), ZetaError> {
-        let Some(spec) = resolve(client, channel, catalog, address)? else {
-            return Ok(());
-        };
+    send_reply(client, channel, overview_listing(&entries))?;
 
-        if value.eq_ignore_ascii_case(RESET_VALUE) {
-            match self.settings.reset(identity, spec).await {
-                Ok(true) => {
-                    send_reply(
-                        client,
-                        channel,
-                        labeled_reply(LABEL, format_args!("{address} reset")),
-                    )?;
-                }
-                Ok(false) => {
-                    send_reply(
-                        client,
-                        channel,
-                        labeled_reply(LABEL, format_args!("{address} was not set")),
-                    )?;
-                }
-                Err(error) => report_store_error(client, channel, &error)?,
-            }
+    Ok(())
+}
 
-            return Ok(());
+/// Replies with the description, accepted values, default, and current value of `address`.
+async fn describe(
+    ctx: &Context,
+    client: &Client,
+    channel: &str,
+    identity: &UserIdentity,
+    catalog: &PluginCatalog,
+    address: &str,
+) -> Result<(), ZetaError> {
+    let Some(spec) = resolve(client, channel, catalog, address)? else {
+        return Ok(());
+    };
+
+    let (current, failed) = match ctx.accounts().preferences().raw(identity, spec).await {
+        Ok(Some(value)) => (value, false),
+        Ok(None) => (default_value(spec), false),
+        Err(error) => {
+            warn_load_failure(&error);
+            (default_value(spec), true)
         }
+    };
 
-        let Some(canonical) = spec.canonical(value) else {
-            send_reply(
-                client,
-                channel,
-                labeled_reply(
-                    LABEL,
-                    format_args!("{address} must be one of: {}", spec.kind.values()),
-                ),
-            )?;
+    let note = failed.then_some(" (could not load your value)");
+    let line = describe_line(spec, &current, note);
 
-            return Ok(());
-        };
+    send_reply(client, channel, line)?;
 
-        match self.settings.set(identity, spec, canonical).await {
-            Ok(()) => {
+    Ok(())
+}
+
+/// Stores `value` for `address`, or removes the stored value when `value` is `reset`.
+async fn change(
+    ctx: &Context,
+    client: &Client,
+    channel: &str,
+    identity: &UserIdentity,
+    catalog: &PluginCatalog,
+    address: &str,
+    value: &str,
+) -> Result<(), ZetaError> {
+    let Some(spec) = resolve(client, channel, catalog, address)? else {
+        return Ok(());
+    };
+
+    if value.eq_ignore_ascii_case(RESET_VALUE) {
+        match ctx.accounts().preferences().reset(identity, spec).await {
+            Ok(true) => {
                 send_reply(
                     client,
                     channel,
-                    labeled_reply(LABEL, format_args!("{address} set to {canonical}")),
+                    labeled_reply(LABEL, format_args!("{address} reset")),
+                )?;
+            }
+            Ok(false) => {
+                send_reply(
+                    client,
+                    channel,
+                    labeled_reply(LABEL, format_args!("{address} was not set")),
                 )?;
             }
             Err(error) => report_store_error(client, channel, &error)?,
         }
 
-        Ok(())
+        return Ok(());
     }
+
+    let Some(canonical) = spec.canonical(value) else {
+        send_reply(
+            client,
+            channel,
+            labeled_reply(
+                LABEL,
+                format_args!("{address} must be one of: {}", accepted_values(spec)),
+            ),
+        )?;
+
+        return Ok(());
+    };
+
+    match ctx
+        .accounts()
+        .preferences()
+        .set(identity, spec, canonical)
+        .await
+    {
+        Ok(()) => {
+            send_reply(
+                client,
+                channel,
+                labeled_reply(LABEL, format_args!("{address} set to {canonical}")),
+            )?;
+        }
+        Err(error) => report_store_error(client, channel, &error)?,
+    }
+
+    Ok(())
 }
 
 /// Why a `plugin.key` address could not be resolved.
@@ -268,32 +260,35 @@ enum AddressError {
 /// Resolves a `plugin.key` address to its registered descriptor.
 ///
 /// Pure so the malformed/unknown distinction stays testable without a client.
-fn parse_address(
+fn parse_address<'a>(
     address: &str,
-    catalog: &UserSettingsCatalog,
-) -> Result<&'static UserSettingSpec, AddressError> {
+    catalog: &'a PluginCatalog,
+) -> Result<&'a PreferenceSpec, AddressError> {
     let Some((plugin, key)) = address.split_once('.') else {
         return Err(AddressError::Malformed);
     };
 
-    catalog.find(plugin, key).ok_or(AddressError::Unknown)
+    catalog.preference(plugin, key).ok_or(AddressError::Unknown)
 }
 
 /// Resolves a `plugin.key` address, replying to the channel when it is malformed or unknown,
 /// and returning [`None`] for the caller to stop at.
-fn resolve(
+fn resolve<'a>(
     client: &Client,
     channel: &str,
-    catalog: &UserSettingsCatalog,
+    catalog: &'a PluginCatalog,
     address: &str,
-) -> Result<Option<&'static UserSettingSpec>, ZetaError> {
+) -> Result<Option<&'a PreferenceSpec>, ZetaError> {
     match parse_address(address, catalog) {
         Ok(spec) => Ok(Some(spec)),
         Err(AddressError::Malformed) => {
             send_reply(
                 client,
                 channel,
-                labeled_reply(LABEL, "address settings as plugin.key, e.g. tldr.language"),
+                labeled_reply(
+                    LABEL,
+                    "address preferences as plugin.key, e.g. tldr.language",
+                ),
             )?;
 
             Ok(None)
@@ -302,7 +297,7 @@ fn resolve(
             send_reply(
                 client,
                 channel,
-                labeled_reply(LABEL, format_args!("unknown setting {address}")),
+                labeled_reply(LABEL, format_args!("unknown preference {address}")),
             )?;
 
             Ok(None)
@@ -312,16 +307,23 @@ fn resolve(
 
 /// The value shown when the user has not stored one: the descriptor default, or `-` when the
 /// plugin's unset behavior is not a stored value.
-fn default_value(spec: &UserSettingSpec) -> String {
+fn default_value(spec: &PreferenceSpec) -> String {
     spec.default.map_or_else(|| "-".to_owned(), str::to_owned)
 }
 
+/// Renders the accepted values of `spec` for a reply, e.g. `summary, takeaway`.
+fn accepted_values(spec: &PreferenceSpec) -> String {
+    match &spec.kind {
+        PreferenceKind::Enum(values) => values.join(", "),
+    }
+}
+
 /// Renders one overview entry: `plugin.key=current`.
-fn overview_entry(spec: &UserSettingSpec, current: &str) -> String {
+fn overview_entry(spec: &PreferenceSpec, current: &str) -> String {
     format!("{}={current}", spec.id())
 }
 
-/// Renders the overview listing from `entries`, trailing with a count of the settings that did
+/// Renders the overview listing from `entries`, trailing with a count of the preferences that did
 /// not fit the line budget.
 fn overview_listing(entries: &[String]) -> String {
     let mut listing = labeled_reply_prefix(LABEL);
@@ -347,8 +349,9 @@ fn overview_listing(entries: &[String]) -> String {
 /// The whole line — `note` included — is byte-budgeted like the listing replies, since the IRC
 /// line limit counts bytes; the note is reserved before the value list is cut, so it is never
 /// pushed off the end by the truncation it follows.
-fn describe_line(spec: &UserSettingSpec, current: &str, note: Option<&str>) -> String {
+fn describe_line(spec: &PreferenceSpec, current: &str, note: Option<&str>) -> String {
     let note = note.unwrap_or_default();
+    let values = accepted_values(spec);
     let mut line = format!(
         "{} — {}; one of: ",
         labeled_reply_prefix(&spec.id()),
@@ -360,7 +363,6 @@ fn describe_line(spec: &UserSettingSpec, current: &str, note: Option<&str>) -> S
     // description just truncates the values harder instead of panicking.
     let framing = LABELED_PREFIX_BYTES + spec.id().len() + spec.description.len() + note.len() + 64;
     let budget = MAX_LISTING_LENGTH.saturating_sub(framing);
-    let values = spec.kind.values();
     let values = values.truncate_bytes_within(budget, "…");
     line.push_str(&values);
     line.push_str("; default: ");
@@ -373,12 +375,12 @@ fn describe_line(spec: &UserSettingSpec, current: &str, note: Option<&str>) -> S
         .into_owned()
 }
 
-/// Logs a failed store operation and tells the channel the setting could not be changed.
+/// Logs a failed store operation and tells the channel the preference could not be changed.
 ///
 /// [`DbError`]'s `Display` is reply-grade, so it doubles as the reply; the operator detail
 /// stays in the `source()` chain this logs.
 fn report_store_error(client: &Client, channel: &str, error: &DbError) -> Result<(), ZetaError> {
-    warn!(exception.message = %Chain(error), "could not change a user setting");
+    warn!(exception.message = %Chain(error), "could not change a user preference");
 
     send_reply(client, channel, plain_reply(error))?;
 
@@ -387,34 +389,47 @@ fn report_store_error(client: &Client, channel: &str, error: &DbError) -> Result
 
 /// Logs a failed load; the reply falls back to the default and notes it.
 fn warn_load_failure(error: &DbError) {
-    warn!(exception.message = %Chain(error), "could not load a user setting");
+    warn!(exception.message = %Chain(error), "could not load a user preference");
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zeta_plugin::accounts::settings::{UserSettingKind, UserSettingSpec};
+    use zeta_plugin::{CatalogEntry, UrlScope};
 
     /// A descriptor under a plugin name unique to this test file's registry uses.
-    static LANGUAGE: UserSettingSpec = UserSettingSpec {
-        plugin: "settings-command-test",
+    const LANGUAGE: PreferenceSpec = PreferenceSpec {
+        plugin: "preferences-command-test",
         key: "language",
-        kind: UserSettingKind::Enum(&["DA", "DE", "EN"]),
+        kind: PreferenceKind::Enum(&["DA", "DE", "EN"]),
         description: "the output language",
         default: Some("EN"),
     };
-    static LANGUAGE_SPECS: [UserSettingSpec; 1] = [LANGUAGE];
 
-    fn catalog() -> UserSettingsCatalog {
-        UserSettingsCatalog::new([("settings-command-test", &LANGUAGE_SPECS[..])])
+    /// A descriptor whose unset behavior is not a stored value.
+    const NO_DEFAULT: PreferenceSpec = PreferenceSpec {
+        plugin: "preferences-command-test",
+        key: "mode",
+        kind: PreferenceKind::Enum(&["brief", "full"]),
+        description: "the output mode",
+        default: None,
+    };
+
+    fn catalog() -> PluginCatalog {
+        PluginCatalog::new(vec![CatalogEntry::new(
+            "preferences-command-test".to_owned(),
+            Vec::new(),
+            UrlScope::None,
+            vec![LANGUAGE, NO_DEFAULT],
+        )])
     }
 
     #[test]
-    fn parse_address_resolves_registered_settings_only() {
+    fn parse_address_resolves_registered_preferences_only() {
         let catalog = catalog();
 
         assert_eq!(
-            parse_address(&LANGUAGE.id(), &catalog).map(UserSettingSpec::id),
+            parse_address(&LANGUAGE.id(), &catalog).map(PreferenceSpec::id),
             Ok(LANGUAGE.id())
         );
         assert_eq!(
@@ -422,7 +437,7 @@ mod tests {
             Some(AddressError::Malformed)
         );
         assert_eq!(
-            parse_address("settings-command-missing.mode", &catalog).err(),
+            parse_address("preferences-command-missing.mode", &catalog).err(),
             Some(AddressError::Unknown)
         );
     }
@@ -502,11 +517,11 @@ mod tests {
         let values: Vec<&'static str> = (0..100)
             .map(|index| -> &'static str { Box::leak(format!("LANG{index:03}").into_boxed_str()) })
             .collect();
-        let wide = UserSettingSpec {
-            plugin: "settings-command-test",
+        let wide = PreferenceSpec {
+            plugin: "preferences-command-test",
             key: "wide",
-            kind: UserSettingKind::Enum(Box::leak(values.into_boxed_slice())),
-            description: "a setting with a very wide value list",
+            kind: PreferenceKind::Enum(Box::leak(values.into_boxed_slice())),
+            description: "a preference with a very wide value list",
             default: None,
         };
         let line = describe_line(&wide, "-", Some(" (could not load your value)"));
@@ -525,6 +540,6 @@ mod tests {
     #[test]
     fn default_value_renders_the_descriptor_default_or_a_dash() {
         assert_eq!(default_value(&LANGUAGE), "EN");
-        assert_eq!(default_value(&LANGUAGE), "EN");
+        assert_eq!(default_value(&NO_DEFAULT), "-");
     }
 }

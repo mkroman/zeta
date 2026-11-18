@@ -75,8 +75,8 @@ impl Zeta {
         let context = {
             let context = context.with_database(db.clone());
 
-            // The account service (identity tracking + per-user settings) shares the pool and
-            // its settings cache spans the plugins, so a value changed through the `.set`
+            // The account service (identity tracking + per-user preferences) shares the pool and
+            // its preferences cache spans the plugins, so a value changed through the `.set`
             // command is visible to every reader.
             let accounts = Arc::new(Accounts::new(db));
             context.with_accounts(accounts)
@@ -99,7 +99,6 @@ impl Zeta {
         let mut registry = Registry::new();
         plugins::register_bundled_plugins(&mut registry, &context, &plugins);
         registry.publish_catalog(&context);
-        registry.publish_user_settings_catalog(&context);
 
         let failed = registry.failed_plugin_names().collect::<Vec<_>>();
 

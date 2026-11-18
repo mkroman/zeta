@@ -65,6 +65,7 @@ plugins-notification = { path = "crates/plugins-notification", default-features 
 plugins-ofn = { path = "crates/plugins-ofn", default-features = false }
 plugins-openweathermap = { path = "crates/plugins-openweathermap", default-features = false }
 plugins-pornhub = { path = "crates/plugins-pornhub", default-features = false }
+plugins-preferences = { path = "crates/plugins-preferences", default-features = false }
 plugins-reddit = { path = "crates/plugins-reddit", default-features = false }
 plugins-rink = { path = "crates/plugins-rink", default-features = false }
 plugins-rust-playground = { path = "crates/plugins-rust-playground", default-features = false }
@@ -79,7 +80,6 @@ plugins-tvmaze = { path = "crates/plugins-tvmaze", default-features = false }
 plugins-twitch = { path = "crates/plugins-twitch", default-features = false }
 plugins-unwall = { path = "crates/plugins-unwall", default-features = false }
 plugins-urban-dictionary = { path = "crates/plugins-urban-dictionary", default-features = false }
-plugins-user-settings = { path = "crates/plugins-user-settings", default-features = false }
 plugins-youtube = { path = "crates/plugins-youtube", default-features = false }
 proc-macro2 = "1"
 quote = "1"

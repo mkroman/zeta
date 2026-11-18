@@ -309,7 +309,7 @@ mod tests {
             name,
             plugin,
             subscriptions: Subscriptions::new(),
-            user_settings: &[],
+            preferences: Vec::new(),
         }
     }
 
@@ -385,7 +385,7 @@ mod tests {
                     seen: Arc::clone(&seen),
                 },
                 subscriptions,
-                user_settings: &[],
+                preferences: Vec::new(),
             }],
             &ctx,
             &client,
@@ -565,7 +565,7 @@ mod tests {
                 name: "recorder",
                 plugin: Recorder(Arc::clone(&recording)),
                 subscriptions,
-                user_settings: &[],
+                preferences: Vec::new(),
             }],
             &ctx,
             &client,

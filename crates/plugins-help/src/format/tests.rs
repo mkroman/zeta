@@ -89,15 +89,31 @@ struct Stats {}
 
 fn catalog() -> PluginCatalog {
     PluginCatalog::new(vec![
-        CatalogEntry::new("alert".to_owned(), ALERT_COMMANDS.to_vec(), UrlScope::None),
-        CatalogEntry::new("dig".to_owned(), DIG_COMMANDS.to_vec(), UrlScope::None),
-        CatalogEntry::new("imdb".to_owned(), IMDB_COMMANDS.to_vec(), UrlScope::None),
+        CatalogEntry::new(
+            "alert".to_owned(),
+            ALERT_COMMANDS.to_vec(),
+            UrlScope::None,
+            Vec::new(),
+        ),
+        CatalogEntry::new(
+            "dig".to_owned(),
+            DIG_COMMANDS.to_vec(),
+            UrlScope::None,
+            Vec::new(),
+        ),
+        CatalogEntry::new(
+            "imdb".to_owned(),
+            IMDB_COMMANDS.to_vec(),
+            UrlScope::None,
+            Vec::new(),
+        ),
         CatalogEntry::new(
             "openweathermap".to_owned(),
             WEATHER_COMMANDS.to_vec(),
             UrlScope::None,
+            Vec::new(),
         ),
-        CatalogEntry::new("hooks".to_owned(), Vec::new(), UrlScope::None),
+        CatalogEntry::new("hooks".to_owned(), Vec::new(), UrlScope::None, Vec::new()),
     ])
 }
 
@@ -284,6 +300,7 @@ fn splits_long_lists_into_unheaded_continuations() {
                     format!("plugin-{index:03}{}", "x".repeat(90)),
                     vec![HELP],
                     UrlScope::None,
+                    Vec::new(),
                 )
             })
             .collect(),

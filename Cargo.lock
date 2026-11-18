@@ -3030,6 +3030,7 @@ dependencies = [
  "plugins-ofn",
  "plugins-openweathermap",
  "plugins-pornhub",
+ "plugins-preferences",
  "plugins-reddit",
  "plugins-rink",
  "plugins-rust-playground",
@@ -3043,7 +3044,6 @@ dependencies = [
  "plugins-twitch",
  "plugins-unwall",
  "plugins-urban-dictionary",
- "plugins-user-settings",
  "plugins-youtube",
  "serde",
  "serde_json",
@@ -3363,6 +3363,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugins-preferences"
+version = "0.0.0"
+dependencies = [
+ "clap",
+ "serde",
+ "tracing",
+ "zeta-plugin",
+ "zeta-test-support",
+ "zeta-utils",
+]
+
+[[package]]
 name = "plugins-reddit"
 version = "0.0.0"
 dependencies = [
@@ -3582,18 +3594,6 @@ dependencies = [
  "time",
  "tracing",
  "zeta-http",
- "zeta-plugin",
- "zeta-test-support",
- "zeta-utils",
-]
-
-[[package]]
-name = "plugins-user-settings"
-version = "0.0.0"
-dependencies = [
- "clap",
- "serde",
- "tracing",
  "zeta-plugin",
  "zeta-test-support",
  "zeta-utils",

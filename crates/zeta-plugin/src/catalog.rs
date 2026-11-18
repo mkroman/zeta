@@ -2,6 +2,7 @@
 
 use std::collections::HashSet;
 
+use crate::accounts::PreferenceSpec;
 use crate::{CommandSpec, UrlScope};
 
 /// Metadata about a registered plugin.
@@ -14,16 +15,24 @@ pub struct CatalogEntry {
     pub commands: Vec<CommandSpec>,
     /// The scope of URLs the plugin registered interest in.
     pub url_scope: UrlScope,
+    /// The per-user preferences the plugin declared.
+    pub preferences: Vec<PreferenceSpec>,
 }
 
 impl CatalogEntry {
     /// Creates a new catalog entry.
     #[must_use]
-    pub const fn new(name: String, commands: Vec<CommandSpec>, url_scope: UrlScope) -> Self {
+    pub const fn new(
+        name: String,
+        commands: Vec<CommandSpec>,
+        url_scope: UrlScope,
+        preferences: Vec<PreferenceSpec>,
+    ) -> Self {
         Self {
             name,
             commands,
             url_scope,
+            preferences,
         }
     }
 
@@ -93,15 +102,29 @@ impl PluginCatalog {
             || (host.bytes().any(|byte| byte.is_ascii_uppercase())
                 && self.handled_hosts.contains(&host.to_ascii_lowercase()))
     }
+
+    /// The preference `plugin` declares as `key`, if it is registered.
+    ///
+    /// This is the lookup behind the `.set` command: a preference is only addressable when the
+    /// plugin that declares it is loaded, so a disabled plugin's preferences disappear with it.
+    #[must_use]
+    pub fn preference(&self, plugin: &str, key: &str) -> Option<&PreferenceSpec> {
+        self.entries
+            .iter()
+            .filter(|entry| entry.name == plugin)
+            .flat_map(|entry| &entry.preferences)
+            .find(|spec| spec.key == key)
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::accounts::PreferenceKind;
     use super::*;
 
     /// Returns an entry with no commands, scoped to `url_scope`.
     fn entry(name: &str, url_scope: UrlScope) -> CatalogEntry {
-        CatalogEntry::new(name.to_owned(), Vec::new(), url_scope)
+        CatalogEntry::new(name.to_owned(), Vec::new(), url_scope, Vec::new())
     }
 
     #[test]
@@ -148,5 +171,51 @@ mod tests {
                 "for {host}"
             );
         }
+    }
+
+    #[test]
+    fn preferences_are_found_by_plugin_and_key() {
+        const GAMMA_MODE: PreferenceSpec = PreferenceSpec {
+            plugin: "gamma",
+            key: "mode",
+            kind: PreferenceKind::Enum(&["summary", "takeaway"]),
+            description: "the gamma mode",
+            default: Some("summary"),
+        };
+        const ALPHA_ACCENT: PreferenceSpec = PreferenceSpec {
+            plugin: "alpha",
+            key: "accent",
+            kind: PreferenceKind::Enum(&["DA", "DE"]),
+            description: "the alpha accent",
+            default: None,
+        };
+
+        let catalog = PluginCatalog::new(vec![
+            CatalogEntry::new(
+                "alpha".to_owned(),
+                Vec::new(),
+                UrlScope::None,
+                vec![ALPHA_ACCENT],
+            ),
+            CatalogEntry::new(
+                "gamma".to_owned(),
+                Vec::new(),
+                UrlScope::None,
+                vec![GAMMA_MODE],
+            ),
+        ]);
+
+        assert_eq!(
+            catalog.preference("gamma", "mode").map(PreferenceSpec::id),
+            Some("gamma.mode".to_owned())
+        );
+        assert_eq!(
+            catalog
+                .preference("alpha", "accent")
+                .map(PreferenceSpec::id),
+            Some("alpha.accent".to_owned())
+        );
+        assert!(catalog.preference("alpha", "mode").is_none());
+        assert!(catalog.preference("missing", "mode").is_none());
     }
 }

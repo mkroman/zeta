@@ -1,9 +1,9 @@
 [package]
-name = "plugins-user-settings"
+name = "plugins-preferences"
 version = "0.0.0"
 rust-version = "1.100"
 edition = "2024"
-description = "The user-settings plugin for the zeta IRC bot."
+description = "The preferences plugin for the zeta IRC bot."
 license.workspace = true
 repository.workspace = true
 

@@ -30,16 +30,20 @@ pub trait Registered: Plugin + Sized + 'static {
     /// access other plugins' configuration.
     type Settings: Default + DeserializeOwned;
 
-    /// The per-user settings the plugin offers, as a static descriptor slice.
+    /// The per-user preferences the plugin offers.
     ///
-    /// The `#[plugin]` attribute macro sets it from its `user_settings = SLICE` argument,
-    /// defaulting to an empty slice. The runtime collects the loaded plugins' slices into the
-    /// [`UserSettingsCatalog`](crate::accounts::UserSettingsCatalog) published to the shared
-    /// state, and users change the values through the `.set` command; the plugin itself
-    /// reads them through [`Context::accounts`](crate::Context::accounts) by these same
-    /// descriptors. Each slice must spell its own plugin's [`Registered::NAME`] in its specs'
-    /// `plugin` field — the runtime warns when the two disagree.
-    const USER_SETTINGS: &'static [crate::accounts::settings::UserSettingSpec] = &[];
+    /// The `#[plugin]` attribute macro generates this from the plugin's preference declaration,
+    /// defaulting to none. The runtime carries the descriptors on the
+    /// [`LoadedPlugin`](crate::LoadedPlugin) and folds them into the plugin's
+    /// [`CatalogEntry`](crate::CatalogEntry), so the `.set` command lists exactly the preferences
+    /// of the loaded plugins; the plugin itself reads the values through
+    /// [`Context::accounts`](crate::Context::accounts) by these same descriptors. Each
+    /// descriptor must spell this plugin's [`Registered::NAME`] in its `plugin` field — the
+    /// runtime warns when the two disagree.
+    #[must_use]
+    fn preferences() -> Vec<crate::accounts::PreferenceSpec> {
+        Vec::new()
+    }
 
     /// The constructor for a new plugin.
     ///

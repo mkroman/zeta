@@ -1,7 +1,7 @@
-//! The `user_settings` and `user_hostmasks` queries.
+//! The `preferences` and `user_hostmasks` queries.
 //!
-//! One repository for both tables of the account subsystem: the settings facet reads and writes
-//! values, and the hostmask tracking records where identities have been seen from.
+//! One repository for both tables of the account subsystem: the preferences facet reads and
+//! writes values, and the hostmask tracking records where identities have been seen from.
 
 use crate::accounts::hostmasks::ObservedHostmask;
 use crate::database::DbError;
@@ -9,7 +9,7 @@ use crate::impl_repository;
 use zeta_plugin_macros::instrument_database;
 
 impl_repository! {
-    /// Repository for the account subsystem: settings values and observed hostmasks.
+    /// Repository for the account subsystem: preference values and observed hostmasks.
     AccountRepository
 }
 
@@ -19,8 +19,8 @@ impl AccountRepository {
     /// # Errors
     ///
     /// Returns [`DbError`] if the query fails.
-    #[instrument_database(operation = "SELECT", collection = "user_settings")]
-    pub(crate) async fn setting_value(
+    #[instrument_database(operation = "SELECT", collection = "preferences")]
+    pub(crate) async fn preference_value(
         &self,
         identity: &str,
         plugin: &str,
@@ -28,7 +28,7 @@ impl AccountRepository {
     ) -> Result<Option<String>, DbError> {
         sqlx::query_scalar(
             "SELECT value
-             FROM user_settings
+             FROM preferences
              WHERE identity = $1 AND plugin = $2 AND key = $3",
         )
         .bind(identity)
@@ -36,7 +36,7 @@ impl AccountRepository {
         .bind(key)
         .fetch_optional(&self.db)
         .await
-        .map_err(|error| DbError::load("user setting", error))
+        .map_err(|error| DbError::load("preference", error))
     }
 
     /// Stores `value` for `plugin.key` and `identity`, replacing any stored value.
@@ -44,8 +44,8 @@ impl AccountRepository {
     /// # Errors
     ///
     /// Returns [`DbError`] if the insert fails.
-    #[instrument_database(operation = "INSERT", collection = "user_settings")]
-    pub(crate) async fn store_setting(
+    #[instrument_database(operation = "INSERT", collection = "preferences")]
+    pub(crate) async fn store_preference(
         &self,
         identity: &str,
         plugin: &str,
@@ -53,7 +53,7 @@ impl AccountRepository {
         value: &str,
     ) -> Result<(), DbError> {
         sqlx::query(
-            "INSERT INTO user_settings (identity, plugin, key, value, updated_at)
+            "INSERT INTO preferences (identity, plugin, key, value, updated_at)
              VALUES ($1, $2, $3, $4, now())
              ON CONFLICT (identity, plugin, key)
              DO UPDATE SET value = EXCLUDED.value, updated_at = now()",
@@ -64,7 +64,7 @@ impl AccountRepository {
         .bind(value)
         .execute(&self.db)
         .await
-        .map_err(|error| DbError::insert("user setting", error))?;
+        .map_err(|error| DbError::insert("preference", error))?;
 
         Ok(())
     }
@@ -74,15 +74,15 @@ impl AccountRepository {
     /// # Errors
     ///
     /// Returns [`DbError`] if the delete fails.
-    #[instrument_database(operation = "DELETE", collection = "user_settings")]
-    pub(crate) async fn delete_setting(
+    #[instrument_database(operation = "DELETE", collection = "preferences")]
+    pub(crate) async fn delete_preference(
         &self,
         identity: &str,
         plugin: &str,
         key: &str,
     ) -> Result<bool, DbError> {
         let deleted = sqlx::query(
-            "DELETE FROM user_settings
+            "DELETE FROM preferences
              WHERE identity = $1 AND plugin = $2 AND key = $3",
         )
         .bind(identity)
@@ -90,7 +90,7 @@ impl AccountRepository {
         .bind(key)
         .execute(&self.db)
         .await
-        .map_err(|error| DbError::delete("user setting", error))?;
+        .map_err(|error| DbError::delete("preference", error))?;
 
         Ok(deleted.rows_affected() > 0)
     }
