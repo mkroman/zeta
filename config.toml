@@ -417,6 +417,11 @@ name = "#zeta.dev"
   # The Trustpilot domain used for review links (e.g. "dk" or "www").
   # review_domain = "dk"
 
+  # Per-user preferences (`.set`), the account subsystem's user-facing command.
+  [plugins.preferences]
+  # Enable the plugin.
+  enabled = true
+
   # TVmaze integration.
   [plugins.tvmaze]
   # Enable the plugin.

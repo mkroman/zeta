@@ -202,6 +202,50 @@ async fn negative_results_are_cached_and_expire_sooner() {
 }
 
 #[tokio::test]
+async fn remove_invalidates_cached_and_negative_entries() {
+    let cache = ttl_map(Duration::from_mins(1));
+    let mut refreshes = 0;
+
+    cache
+        .get_or_refresh("present".to_string(), || async {
+            refreshes += 1;
+            Ok::<_, ()>(Some(7))
+        })
+        .await
+        .unwrap();
+    cache
+        .get_or_refresh("missing".to_string(), || async {
+            refreshes += 1;
+            Ok::<_, ()>(None)
+        })
+        .await
+        .unwrap();
+    assert_eq!(refreshes, 2);
+
+    assert!(cache.remove(&"present".to_string()));
+    assert!(cache.remove(&"missing".to_string()));
+    assert!(!cache.remove(&"missing".to_string()));
+
+    // Both keys refresh again after the invalidation, positive and negative alike.
+    cache
+        .get_or_refresh("present".to_string(), || async {
+            refreshes += 1;
+            Ok::<_, ()>(Some(7))
+        })
+        .await
+        .unwrap();
+    cache
+        .get_or_refresh("missing".to_string(), || async {
+            refreshes += 1;
+            Ok::<_, ()>(None)
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(refreshes, 4);
+}
+
+#[tokio::test]
 async fn peek_arc_preserves_positive_and_negative_entries() {
     let cache = ttl_map(Duration::from_mins(1));
 

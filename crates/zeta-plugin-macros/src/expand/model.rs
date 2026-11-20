@@ -19,6 +19,8 @@ pub(super) struct Plugin {
     pub(super) urls: Option<UrlsArgs>,
     /// Whether every channel message is received.
     pub(super) messages: bool,
+    /// The per-user preferences the plugin offers, from `preferences = Type`; none when absent.
+    pub(super) preferences: Option<Type>,
     /// The inherent constructor, when the impl block declared one.
     pub(super) constructor: Option<Constructor>,
     /// The `#[command]` methods, in declaration order.

@@ -3040,6 +3040,7 @@ dependencies = [
  "plugins-ofn",
  "plugins-openweathermap",
  "plugins-pornhub",
+ "plugins-preferences",
  "plugins-reddit",
  "plugins-rink",
  "plugins-rust-playground",
@@ -3368,6 +3369,18 @@ dependencies = [
  "zeta-http",
  "zeta-plugin",
  "zeta-url",
+ "zeta-utils",
+]
+
+[[package]]
+name = "plugins-preferences"
+version = "0.0.0"
+dependencies = [
+ "clap",
+ "serde",
+ "tracing",
+ "zeta-plugin",
+ "zeta-test-support",
  "zeta-utils",
 ]
 
@@ -6258,6 +6271,7 @@ dependencies = [
  "tracing",
  "url",
  "wildmatch",
+ "zeta-cache",
  "zeta-http",
  "zeta-irc",
  "zeta-plugin-macros",

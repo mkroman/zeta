@@ -39,6 +39,7 @@
 //! | `urls(any)` | Receives every URL posted in any channel. |
 //! | `urls(hosts = EXPR)` | Receives the URLs whose host is in `EXPR` (a `&[&str]`). |
 //! | `messages` | Receives every channel message. |
+//! | `preferences = Type` | The plugin's per-user preferences; `Registered::preferences` returns the descriptors `Type` declares. |
 //!
 //! The generated constructor registers the URLs, then the message subscription, then the
 //! `#[command]`s (in declaration order), and finally delegates to the inherent constructor or
@@ -104,6 +105,42 @@
 //! A `#[cfg]` or `#[cfg_attr]` on a `#[command]` or `#[handler]` method is copied to the
 //! generated constant, registration, dispatch arm, and forwarding method, so feature-gated
 //! methods can be declared in the same impl block.
+//!
+//! # Per-user preferences
+//!
+//! A plugin declares what its users may configure with `PreferenceValue` on an enum,
+//! `PreferenceSet` on a struct, and `preferences = Type` on the impl block:
+//!
+//! ```ignore
+//! /// How much of a page the summary keeps.
+//! #[derive(Clone, Copy, Default, PreferenceValue)]
+//! #[preference(rename_all = "lower")]
+//! pub enum Detail {
+//!     /// Only the conclusion.
+//!     #[default]
+//!     Brief,
+//!     /// The full summary.
+//!     Full,
+//! }
+//!
+//! /// What the plugin offers its users.
+//! #[derive(PreferenceSet)]
+//! pub struct TldrPreferences {
+//!     /// How long the summary is.
+//!     pub detail: Detail,
+//!     /// The maximum number of words, or the plugin's own default when unset.
+//!     pub words: Option<Detail>,
+//! }
+//!
+//! #[plugin(name = "tldr", preferences = TldrPreferences)]
+//! impl Tldr { /* … */ }
+//! ```
+//!
+//! The set's derive generates `TldrPreferences::reader(service, plugin, identity)` and the typed
+//! reader `TldrPreferencesReader`, whose methods return the sender's values — the field's default
+//! for a `T` field, `None` for an `Option<T>` field — without touching the database for an
+//! unidentified sender. `preferences = TldrPreferences` makes the generated
+//! `Registered::preferences` return the matching descriptors.
 
 use proc_macro::TokenStream;
 use syn::parse_macro_input;
@@ -111,6 +148,7 @@ use syn::parse_macro_input;
 mod args;
 mod database;
 mod expand;
+mod preferences;
 
 /// Implements [`Plugin`](https://docs.rs/zeta-plugin) for an inherent impl block; see the
 /// [crate documentation](self) for the attribute grammar.
@@ -120,6 +158,34 @@ pub fn plugin(attributes: TokenStream, item: TokenStream) -> TokenStream {
     let inherent = parse_macro_input!(item as syn::ItemImpl);
 
     expand::expand(&args, inherent).into()
+}
+
+/// Derives the preference-value trait for an enum; see the
+/// [crate documentation](self) for the grammar.
+///
+/// The accepted spellings are the variant idents in declaration order, unless the container
+/// renames them with `#[preference(rename_all = "UPPER")]` or `#[preference(rename_all =
+/// "lower")]`; a variant overrides its own spelling with `#[preference(name = "…")]`. The enum
+/// must also derive `Clone` and `Copy`; an enum used as a non-optional preference-set field must
+/// additionally implement `Default`, which supplies that preference's default.
+#[proc_macro_derive(PreferenceValue, attributes(preference))]
+pub fn preference_value(item: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(item as syn::DeriveInput);
+
+    preferences::preference_value(&input).into()
+}
+
+/// Derives the preference-set trait for a struct of preference fields.
+///
+/// Every field is either a preference value type `T` or an `Option<T>`, and every field needs a
+/// doc comment, which becomes the preference's description. The generated
+/// `Struct::reader(service, plugin, identity)` returns the typed reader with one method per
+/// field. See the [crate documentation](self) for the grammar.
+#[proc_macro_derive(PreferenceSet, attributes(preference))]
+pub fn preference_set(item: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(item as syn::DeriveInput);
+
+    preferences::preference_set(&input).into()
 }
 
 /// Wraps a repository method in the database span every plugin's queries share.

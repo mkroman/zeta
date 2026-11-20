@@ -18,8 +18,9 @@ use crate::plugin::{Plugin, Registered};
 /// A plugin constructed from its configuration section, with what the runtime needs to route
 /// events to it.
 ///
-/// The name comes from [`Registered::NAME`], so it can never disagree with the plugin, and the
-/// subscriptions are the ones the plugin registered during construction.
+/// The name comes from [`Registered::NAME`], so it can never disagree with the plugin, the
+/// subscriptions are the ones the plugin registered during construction, and the preferences are
+/// the descriptors it declared.
 pub struct LoadedPlugin<P> {
     /// The plugin's name, taken from [`Registered::NAME`].
     pub name: &'static str,
@@ -27,21 +28,25 @@ pub struct LoadedPlugin<P> {
     pub plugin: P,
     /// The events the plugin registered interest in during construction.
     pub subscriptions: Subscriptions,
+    /// The per-user preferences the plugin declared, taken from [`Registered::preferences`].
+    pub preferences: Vec<crate::accounts::PreferenceSpec>,
 }
 
 // Manual implementation without a `P: Debug` bound: the plugin's own internals are not part of
-// the envelope's identity, which is its name and the subscriptions the runtime routes with.
+// the envelope's identity, which is its name, the subscriptions the runtime routes with, and the
+// preferences it declared.
 impl<P> fmt::Debug for LoadedPlugin<P> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("LoadedPlugin")
             .field("name", &self.name)
             .field("subscriptions", &self.subscriptions)
+            .field("preferences", &self.preferences)
             .finish_non_exhaustive()
     }
 }
 
 impl<P> LoadedPlugin<P> {
-    /// Converts the plugin, keeping its name and subscriptions.
+    /// Converts the plugin, keeping its name, subscriptions and declared preferences.
     ///
     /// The facade uses this to wrap each constructed plugin in its `RuntimePlugin` variant
     /// without copying the subscriptions.
@@ -50,6 +55,7 @@ impl<P> LoadedPlugin<P> {
             name: self.name,
             plugin: map(self.plugin),
             subscriptions: self.subscriptions,
+            preferences: self.preferences,
         }
     }
 }
@@ -77,6 +83,7 @@ where
             name: P::NAME,
             plugin,
             subscriptions,
+            preferences: P::preferences(),
         })
     }
 }

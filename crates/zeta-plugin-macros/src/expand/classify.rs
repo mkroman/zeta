@@ -112,6 +112,7 @@ pub(super) fn classify(args: &PluginArgs, inherent: &syn::ItemImpl) -> syn::Resu
         settings: args.settings.clone(),
         urls: args.urls.clone(),
         messages: args.messages,
+        preferences: args.preferences.clone(),
         constructor,
         commands,
         handlers,

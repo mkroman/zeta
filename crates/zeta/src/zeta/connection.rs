@@ -4,11 +4,14 @@
 //! the socket independently of the dispatch loop, and `dispatch_messages` feeds incoming lines to
 //! the plugin runtime until the stream ends.
 
-use irc::client::prelude::Client;
+use irc::client::prelude::{Capability, Client};
 use tracing::{error, warn};
 
 use crate::Error;
 use crate::config::IrcConfig;
+#[cfg(feature = "database")]
+use std::sync::Arc;
+
 use zeta_plugin_runtime::PluginRuntime;
 
 use plugins::BundledPlugin;
@@ -29,6 +32,56 @@ pub(super) fn connect_span(config: &IrcConfig) -> tracing::Span {
         network.protocol.name = "irc",
         irc.nickname = %config.nickname,
     )
+}
+
+/// Establishes the IRC connection: capability negotiation, registration, and the two side
+/// paths (the outgoing sink and the stream).
+///
+/// The setup gets one bounded `irc.connect` span — the connection itself has no span; the
+/// dispatcher and every reply open their own short spans, so nothing hangs from a never-closing
+/// root.
+///
+/// # Errors
+///
+/// Returns an error when the client cannot be built, registration fails, or the stream cannot
+/// be taken.
+pub(super) async fn connect(
+    irc: &IrcConfig,
+) -> Result<
+    (
+        Client,
+        irc::client::ClientStream,
+        tokio::task::JoinHandle<()>,
+    ),
+    Error,
+> {
+    let mut client = Client::from_config(irc.into())
+        .await
+        .map_err(Error::IrcClient)?;
+
+    // Request the IRCv3 capabilities the account subsystem runs on: message tags so servers
+    // attach tags such as `msgid` to delivered messages, `account-tag` so logged-in senders
+    // carry their services account on every message, `account-notify` so the bot learns when
+    // users in its channels authenticate or log out (`ACCOUNT` notifications), and
+    // `extended-join` so a join names the account joining. A server that supports none of
+    // these answers with a `NAK`, which is harmless; registration continues, and users without
+    // accounts then simply have no identity.
+    client
+        .send_cap_req(&[
+            Capability::Custom("message-tags"),
+            Capability::Custom("account-tag"),
+            Capability::Custom("account-notify"),
+            Capability::Custom("extended-join"),
+        ])
+        .map_err(Error::IrcRegistration)?;
+
+    client.identify().map_err(Error::IrcRegistration)?;
+
+    let outgoing = drive_outgoing(&mut client);
+
+    let stream = client.stream()?;
+
+    Ok::<_, Error>((client, stream, outgoing))
 }
 
 /// Drives the client's outgoing sink independently of the dispatch loop.
@@ -72,6 +125,7 @@ pub(super) fn drive_outgoing(client: &mut Client) -> tokio::task::JoinHandle<()>
 pub(super) async fn dispatch_messages(
     stream: &mut irc::client::ClientStream,
     runtime: &mut PluginRuntime<BundledPlugin>,
+    #[cfg(feature = "database")] accounts: Option<&Arc<zeta_plugin::accounts::Accounts>>,
 ) -> Result<(), Error> {
     use futures::stream::StreamExt;
 
@@ -97,6 +151,14 @@ pub(super) async fn dispatch_messages(
             return Err(Error::IrcDisconnected {
                 reason: reason.clone(),
             });
+        }
+
+        // The account tracker sees every line before the plugins: it updates the in-memory
+        // session state from the IRCv3 account notifications and tags, and touches no
+        // database.
+        #[cfg(feature = "database")]
+        if let Some(accounts) = accounts {
+            accounts.track(&message);
         }
 
         runtime.dispatch(message);
