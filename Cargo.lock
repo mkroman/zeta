@@ -3049,6 +3049,7 @@ dependencies = [
  "plugins-thingiverse",
  "plugins-tiktok",
  "plugins-titles",
+ "plugins-tldr",
  "plugins-trustpilot",
  "plugins-tvmaze",
  "plugins-twitch",
@@ -3522,6 +3523,25 @@ dependencies = [
  "zeta-plugin",
  "zeta-test-support",
  "zeta-url",
+ "zeta-utils",
+]
+
+[[package]]
+name = "plugins-tldr"
+version = "0.0.0"
+dependencies = [
+ "clap",
+ "plugins-shared",
+ "secrecy",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "url",
+ "zeta-http",
+ "zeta-plugin",
+ "zeta-test-support",
  "zeta-utils",
 ]
 
