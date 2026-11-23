@@ -30,6 +30,21 @@ pub trait Registered: Plugin + Sized + 'static {
     /// access other plugins' configuration.
     type Settings: Default + DeserializeOwned;
 
+    /// The per-user preferences the plugin offers.
+    ///
+    /// The `#[plugin]` attribute macro generates this from the plugin's preference declaration,
+    /// defaulting to none. The runtime carries the descriptors on the
+    /// [`LoadedPlugin`](crate::LoadedPlugin) and folds them into the plugin's
+    /// [`CatalogEntry`](crate::CatalogEntry), so the `.set` command lists exactly the preferences
+    /// of the loaded plugins; the plugin itself reads the values through
+    /// [`Context::accounts`](crate::Context::accounts) by these same descriptors. Each
+    /// descriptor must spell this plugin's [`Registered::NAME`] in its `plugin` field — the
+    /// runtime warns when the two disagree.
+    #[must_use]
+    fn preferences() -> Vec<crate::accounts::PreferenceSpec> {
+        Vec::new()
+    }
+
     /// The constructor for a new plugin.
     ///
     /// `settings` holds the plugin's own configuration section, deserialized from

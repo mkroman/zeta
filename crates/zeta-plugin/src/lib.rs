@@ -16,6 +16,12 @@
 //! `zeta-plugin-runtime`. Further shared infrastructure lives in dedicated crates: `zeta-cache`,
 //! `zeta-http`, `zeta-mirror` and `zeta-utils`.
 
+// The attribute macros (`plugin`, `instrument_database`) generate `::zeta_plugin::…` paths,
+// because a proc macro has no `$crate`; the alias lets the crate's own code carry the same
+// attributes the bundled plugins do. Only the database-gated code does so today.
+#[cfg(feature = "database")]
+extern crate self as zeta_plugin;
+
 pub mod command;
 pub mod event;
 pub mod irc;
@@ -26,6 +32,7 @@ mod loaded;
 mod plugin;
 mod types;
 
+pub mod accounts;
 pub mod config;
 pub mod context;
 #[cfg(feature = "database")]
@@ -33,6 +40,9 @@ pub mod database;
 pub mod filtering;
 pub mod hostmask;
 
+#[cfg(feature = "database")]
+pub use accounts::{Accounts, ObservedHostmask, Preferences};
+pub use accounts::{PreferenceKind, PreferenceSet, PreferenceSpec, PreferenceValue, UserIdentity};
 pub use catalog::{CatalogEntry, PluginCatalog};
 pub use command::{ArgsError, ArgsMode, CommandSpec};
 pub use config::HostConfig;
@@ -54,7 +64,7 @@ pub use plugin::{Plugin, Registered};
 #[cfg(feature = "database")]
 pub use sqlx;
 pub use types::NoSettings;
-pub use zeta_plugin_macros::{instrument_database, plugin};
+pub use zeta_plugin_macros::{PreferenceSet, PreferenceValue, instrument_database, plugin};
 pub use zeta_utils::error::Chain;
 
 // Re-exported through the crate root so the code the `#[plugin]` macro generates — and plugin

@@ -190,6 +190,17 @@ where
         entries.insert(key, entry);
     }
 
+    /// Removes the entry for `key`, whether positive or negative, returning whether one existed.
+    ///
+    /// Callers that change the value behind `key` through the source invalidate the cached entry
+    /// with this instead of inserting a new one, so the next read refreshes from the source with
+    /// its normal TTLs rather than the caller having to guess them.
+    pub fn remove(&self, key: &K) -> bool {
+        let mut entries = self.entries.write();
+
+        entries.remove(key).is_some()
+    }
+
     /// Makes room for a new entry by removing expired entries and, when the cache is still at
     /// capacity, the single closest-to-expiring entry.
     ///

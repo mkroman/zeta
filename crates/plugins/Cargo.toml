@@ -66,6 +66,7 @@ notification = ["database", "dep:plugins-notification"]
 ofn = ["database", "http", "dep:plugins-ofn"]
 openweathermap = ["http", "dep:plugins-openweathermap"]
 pornhub = ["http", "dep:plugins-pornhub"]
+preferences = ["database", "dep:plugins-preferences"]
 reddit = ["http", "dep:plugins-reddit"]
 rink = ["http", "dep:plugins-rink"]
 rust-playground = ["http", "dep:plugins-rust-playground"]
@@ -102,6 +103,7 @@ all = [
     "ofn",
     "openweathermap",
     "pornhub",
+    "preferences",
     "reddit",
     "rink",
     "rust-playground",
@@ -141,6 +143,7 @@ plugins-notification = { workspace = true, optional = true }
 plugins-ofn = { workspace = true, optional = true }
 plugins-openweathermap = { workspace = true, optional = true }
 plugins-pornhub = { workspace = true, optional = true }
+plugins-preferences = { workspace = true, optional = true }
 plugins-reddit = { workspace = true, optional = true }
 plugins-rink = { workspace = true, optional = true }
 plugins-rust-playground = { workspace = true, optional = true }

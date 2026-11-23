@@ -102,6 +102,7 @@ where
             name,
             plugin,
             subscriptions,
+            ..
         } in plugins
         {
             let (sender, receiver) = tokio::sync::mpsc::channel(MAILBOX_CAPACITY);
@@ -308,6 +309,7 @@ mod tests {
             name,
             plugin,
             subscriptions: Subscriptions::new(),
+            preferences: Vec::new(),
         }
     }
 
@@ -383,6 +385,7 @@ mod tests {
                     seen: Arc::clone(&seen),
                 },
                 subscriptions,
+                preferences: Vec::new(),
             }],
             &ctx,
             &client,
@@ -562,6 +565,7 @@ mod tests {
                 name: "recorder",
                 plugin: Recorder(Arc::clone(&recording)),
                 subscriptions,
+                preferences: Vec::new(),
             }],
             &ctx,
             &client,

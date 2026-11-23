@@ -92,6 +92,12 @@ pub struct Context {
     /// [`Context::with_database`] before constructing the plugins.
     #[cfg(feature = "database")]
     db: Option<crate::database::Database>,
+    /// The account subsystem service, exposed through [`Context::accounts`].
+    ///
+    /// Always `Some` by the time a plugin runs: the host attaches the service with
+    /// [`Context::with_accounts`] before constructing the plugins.
+    #[cfg(feature = "database")]
+    accounts: Option<Arc<crate::accounts::Accounts>>,
     /// The plugin-visible subset of the bot configuration, exposed through [`Context::config`].
     config: HostConfig,
     /// State published by plugins for other plugins to access, exposed through
@@ -114,6 +120,8 @@ impl Context {
         Self {
             #[cfg(feature = "database")]
             db: None,
+            #[cfg(feature = "database")]
+            accounts: None,
             config,
             shared: SharedState::new(),
             #[cfg(feature = "http")]
@@ -130,6 +138,38 @@ impl Context {
     pub fn with_database(mut self, db: crate::database::Database) -> Self {
         self.db = Some(db);
         self
+    }
+
+    /// Attaches the account subsystem service.
+    ///
+    /// The host calls this after [`Context::with_database`], before any plugin is constructed
+    /// and therefore before [`Context::accounts`] can be reached.
+    #[cfg(feature = "database")]
+    #[must_use]
+    pub fn with_accounts(mut self, accounts: Arc<crate::accounts::Accounts>) -> Self {
+        self.accounts = Some(accounts);
+        self
+    }
+
+    /// Returns the account subsystem service.
+    ///
+    /// The service is shared by every plugin: reads and writes go through one cache, so a value
+    /// changed through the `.set` command is visible to the next reader. Plugins resolve a
+    /// user's preferences through
+    /// [`Accounts::preferences`](crate::accounts::Accounts::preferences) by their own
+    /// descriptors — typically cloned once at construction — and users change the values
+    /// through the `.set` command.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the host did not attach a service with [`Context::with_accounts`] before
+    /// plugins were constructed, which is a host bug.
+    #[cfg(feature = "database")]
+    #[must_use]
+    pub const fn accounts(&self) -> &Arc<crate::accounts::Accounts> {
+        self.accounts
+            .as_ref()
+            .expect("the host attaches the account service before constructing plugins")
     }
 
     /// Returns the database connection pool.
@@ -201,6 +241,8 @@ impl fmt::Debug for Context {
 
         #[cfg(feature = "database")]
         debug.field("database", &self.db.is_some());
+        #[cfg(feature = "database")]
+        debug.field("accounts", &self.accounts.is_some());
         #[cfg(feature = "http")]
         debug.field("http", &self.http.get().is_some());
 

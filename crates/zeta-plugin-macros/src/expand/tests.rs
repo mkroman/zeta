@@ -9,6 +9,7 @@ fn plugin_args() -> PluginArgs {
         settings: None,
         urls: None,
         messages: false,
+        preferences: None,
     }
 }
 
@@ -1027,6 +1028,25 @@ fn annotations_are_stripped_and_lints_allowed() {
     );
 }
 
+/// The rendered tokens with the whitespace removed, so assertions read as code.
+fn compact(tokens: &TokenStream) -> String {
+    tokens
+        .to_string()
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect()
+}
+
+/// Asserts that every `zeta_plugin` occurrence is an absolute path.
+fn assert_absolute_paths(rendered: &str) {
+    for (index, _) in rendered.match_indices("zeta_plugin") {
+        assert!(
+            rendered[..index].ends_with("::"),
+            "`zeta_plugin` must only be referenced through an absolute path: {rendered}"
+        );
+    }
+}
+
 #[test]
 fn generated_paths_are_absolute() {
     let inherent: syn::ItemImpl = parse_quote! {
@@ -1043,15 +1063,50 @@ fn generated_paths_are_absolute() {
             }
         }
     };
+    let args = PluginArgs {
+        preferences: Some(parse_quote!(Prefs)),
+        ..plugin_args()
+    };
+    let plugin = classify(&args, &inherent).expect("the impl should classify");
+
+    let rendered = compact(&render(&plugin, &inherent));
+
+    assert!(rendered.contains("fnhandle"), "{rendered}");
+    assert_absolute_paths(&rendered);
+}
+
+#[test]
+fn the_preferences_type_fills_the_registered_method() {
+    let inherent: syn::ItemImpl = parse_quote! {
+        impl Plugin {}
+    };
+    let args = PluginArgs {
+        preferences: Some(parse_quote!(Prefs)),
+        ..plugin_args()
+    };
+    let plugin = classify(&args, &inherent).expect("the impl should classify");
+
+    let rendered = compact(&render(&plugin, &inherent));
+
+    assert!(
+        rendered.contains(
+            "fnpreferences()->::std::vec::Vec<::zeta_plugin::accounts::PreferenceSpec>{\
+             <Prefsas::zeta_plugin::accounts::PreferenceSet>::preferences(<Selfas\
+             ::zeta_plugin::Registered>::NAME,)}"
+        ),
+        "{rendered}"
+    );
+}
+
+#[test]
+fn a_plugin_without_preferences_declares_none() {
+    let inherent: syn::ItemImpl = parse_quote! {
+        impl Plugin {}
+    };
     let plugin = classify(&plugin_args(), &inherent).expect("the impl should classify");
 
-    let rendered = render(&plugin, &inherent).to_string();
+    let rendered = compact(&render(&plugin, &inherent));
 
-    assert!(rendered.contains("fn handle"), "{rendered}");
-    for (index, _) in rendered.match_indices("zeta_plugin") {
-        assert!(
-            rendered[..index].ends_with(":: "),
-            "`zeta_plugin` must only be referenced through an absolute path: {rendered}"
-        );
-    }
+    assert!(!rendered.contains("fnpreferences"), "{rendered}");
+    assert!(!rendered.contains("PreferenceSpec"), "{rendered}");
 }

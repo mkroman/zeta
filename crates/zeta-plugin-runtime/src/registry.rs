@@ -64,8 +64,10 @@ impl<P> Registry<P> {
     /// Publishes the catalog of registered plugins to the context's shared state.
     ///
     /// Called once after all plugins have been registered, so plugins can discover each other
-    /// through the catalog. The catalog is derived from the registered plugins' subscriptions,
-    /// so it cannot drift from them.
+    /// through the catalog. Every entry carries the subscriptions the plugin declared and the
+    /// per-user preferences it offers, so the catalog cannot drift from the loaded plugins. A
+    /// preference whose descriptor spells a plugin name other than the one that carries it
+    /// produces a warning naming both.
     ///
     /// Plugins may cache the handle to keep shared-state lookups out of their hot paths, so a
     /// catalog published later would not reach every plugin.
@@ -74,13 +76,38 @@ impl<P> Registry<P> {
             .plugins
             .iter()
             .map(|plugin| {
+                for spec in &plugin.preferences {
+                    if spec.plugin != plugin.name {
+                        warn!(
+                            zeta.plugin.name = plugin.name,
+                            "plugin declares its `{}` preference under the name `{}`",
+                            spec.key,
+                            spec.plugin
+                        );
+                    }
+                }
+
                 CatalogEntry::new(
                     plugin.name.to_string(),
                     plugin.subscriptions.commands().to_vec(),
                     plugin.subscriptions.url_scope(),
+                    plugin.preferences.clone(),
                 )
             })
             .collect();
+
+        let preference_count: usize = self
+            .plugins
+            .iter()
+            .map(|plugin| plugin.preferences.len())
+            .sum();
+
+        if preference_count > 0 {
+            debug!(
+                zeta.preference.count = preference_count,
+                "registered plugin preferences"
+            );
+        }
 
         ctx.shared().publish(Arc::new(PluginCatalog::new(entries)));
     }
@@ -155,13 +182,47 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zeta_plugin::{CommandSpec, Plugin, Registered};
-    use zeta_test_support::{RecordingPlugin, publish_recording, test_context};
+    use zeta_plugin::{CommandSpec, Plugin, PreferenceKind, PreferenceSpec, Registered};
+    use zeta_test_support::{RecordingPlugin, assert_empty, publish_recording, test_context};
 
-    /// A one-plugin set mirroring the facade's generated enum.
+    /// The preference [`DeclaringPlugin`] offers, so the catalog tests cover the fold.
+    static LANGUAGE: PreferenceSpec = PreferenceSpec {
+        plugin: DeclaringPlugin::NAME,
+        key: "language",
+        kind: PreferenceKind::Enum(&["DA", "DE", "EN"]),
+        description: "the language of its replies",
+        default: Some("EN"),
+    };
+
+    /// A plugin declaring one per-user preference.
+    struct DeclaringPlugin;
+
+    impl Plugin for DeclaringPlugin {}
+
+    impl Registered for DeclaringPlugin {
+        const NAME: &'static str = "declaring";
+
+        type Settings = zeta_plugin::NoSettings;
+
+        fn new(
+            _: &Context,
+            _: &Self::Settings,
+            _: &mut zeta_plugin::Subscriptions,
+        ) -> Result<Self, Error> {
+            Ok(Self)
+        }
+
+        fn preferences() -> Vec<PreferenceSpec> {
+            vec![LANGUAGE]
+        }
+    }
+
+    /// A two-plugin set mirroring the facade's generated enum.
     enum TestPlugins {
         /// The recording plugin.
         Recording(RecordingPlugin),
+        /// The plugin declaring a preference.
+        Declaring(DeclaringPlugin),
     }
 
     impl Plugin for TestPlugins {
@@ -173,6 +234,7 @@ mod tests {
         ) -> Result<(), Error> {
             match self {
                 Self::Recording(plugin) => plugin.handle(ctx, client, event).await,
+                Self::Declaring(plugin) => plugin.handle(ctx, client, event).await,
             }
         }
 
@@ -183,6 +245,7 @@ mod tests {
         ) -> Result<(), Error> {
             match self {
                 Self::Recording(plugin) => plugin.shutdown(ctx, client).await,
+                Self::Declaring(plugin) => plugin.shutdown(ctx, client).await,
             }
         }
     }
@@ -199,12 +262,22 @@ mod tests {
                 return Ok(Some(loaded.map(Self::Recording)));
             }
 
+            if name == DeclaringPlugin::NAME {
+                let loaded = LoadedPlugin::<DeclaringPlugin>::from_section(ctx, section)?;
+
+                return Ok(Some(loaded.map(Self::Declaring)));
+            }
+
             Ok(None)
         }
 
         fn validate(name: &str, section: Option<&Value>) -> Option<Result<Vec<String>, Error>> {
-            (name == RecordingPlugin::NAME)
-                .then(|| zeta_plugin::validate_settings::<RecordingPlugin>(section))
+            if name == RecordingPlugin::NAME {
+                return Some(zeta_plugin::validate_settings::<RecordingPlugin>(section));
+            }
+
+            (name == DeclaringPlugin::NAME)
+                .then(|| zeta_plugin::validate_settings::<DeclaringPlugin>(section))
         }
     }
 
@@ -263,6 +336,37 @@ mod tests {
         assert_eq!(
             catalog.entries[0].commands,
             [CommandSpec::new(".recording", "record a message")]
+        );
+        // The recording plugin declares no preferences, so the entry carries none and no
+        // preference is addressable.
+        assert_empty!(catalog.entries[0].preferences);
+        assert!(
+            catalog
+                .preference(RecordingPlugin::NAME, "language")
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn publish_catalog_folds_the_declared_preferences_into_the_entry() {
+        let ctx = test_context();
+        let mut registry = Registry::<TestPlugins>::new();
+
+        registry.register(&ctx, DeclaringPlugin::NAME, None);
+        registry.publish_catalog(&ctx);
+
+        let catalog = ctx
+            .shared()
+            .get::<PluginCatalog>()
+            .expect("the catalog should be published");
+
+        assert_eq!(catalog.entries.len(), 1);
+        assert_eq!(catalog.entries[0].preferences, [LANGUAGE]);
+        assert_eq!(
+            catalog
+                .preference(DeclaringPlugin::NAME, LANGUAGE.key)
+                .map(PreferenceSpec::id),
+            Some(LANGUAGE.id())
         );
     }
 

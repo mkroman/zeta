@@ -53,6 +53,24 @@ pub fn message_id(message: &Message) -> Option<&str> {
         .and_then(|Tag(_, value)| value.as_deref())
 }
 
+/// Returns the IRCv3 `account` tag of a message, when it carries a services account.
+///
+/// The tag is attached by the server to messages from logged-in users when the `account-tag`
+/// capability is negotiated; the value is the account name the sender is identified with.
+/// Some networks send the tag with a `*` value for users who are not logged in, which reads
+/// as no account here, like an absent tag.
+#[must_use]
+pub fn account(message: &Message) -> Option<&str> {
+    let account = message
+        .tags
+        .as_deref()?
+        .iter()
+        .find(|Tag(key, _)| key.as_str() == "account")
+        .and_then(|Tag(_, value)| value.as_deref())?;
+
+    (account != "*" && !account.is_empty()).then_some(account)
+}
+
 /// The sender of a message, as identified by its IRC prefix.
 ///
 /// Events without a nickname prefix (e.g. server notices) have no sender; sender-scoped
@@ -155,6 +173,21 @@ macro_rules! event_sender {
         #[must_use]
         pub fn sender(&self) -> Option<Sender<'_>> {
             Sender::from_message(&self.message)
+        }
+
+        /// Returns the identity of the sender, if it has a nickname prefix and is logged into
+        /// services.
+        ///
+        /// The identity is the IRCv3 `account` tag — the services account the sender is
+        /// logged into, stable across clients and connections. A sender who has not identified
+        /// has no identity ([`None`]): per-user state does not apply to them. Plugins that
+        /// personalize behavior per user resolve their settings through
+        /// [`Context::accounts`](crate::Context::accounts) with it, and the tracker records
+        /// the hostmasks each account is seen from.
+        #[cfg(feature = "database")]
+        #[must_use]
+        pub fn identity(&self) -> Option<crate::accounts::UserIdentity> {
+            crate::accounts::UserIdentity::from_message(&self.message)
         }
     };
 }

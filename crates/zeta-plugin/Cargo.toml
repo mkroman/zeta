@@ -10,8 +10,9 @@ repository.workspace = true
 [features]
 default = []
 # Database-backed plugins: the context carries a connection pool and plugins persist their
-# state through repositories.
-database = ["dep:sqlx", "dep:tokio"]
+# state through repositories. The per-user settings service rides along: it is a database
+# client with a cache, attached by the host next to the pool.
+database = ["dep:sqlx", "dep:tokio", "dep:zeta-cache"]
 # The shared HTTP client on the context (and the HTTP configuration it is built from).
 http = ["dep:reqwest", "dep:zeta-http"]
 native-tls = ["sqlx?/tls-native-tls", "zeta-http?/native-tls"]
@@ -28,20 +29,22 @@ reqwest = { workspace = true, optional = true }
 serde.workspace = true
 serde_ignored.workspace = true
 shlex.workspace = true
-sqlx = { workspace = true, optional = true }
+sqlx = { workspace = true, optional = true, features = ["chrono", "macros"] }
 thiserror.workspace = true
 tokio = { workspace = true, optional = true }
 tracing.workspace = true
 url.workspace = true
 wildmatch.workspace = true
+zeta-cache = { workspace = true, optional = true }
 zeta-http = { workspace = true, features = ["http"], optional = true }
 zeta-irc = { workspace = true }
 zeta-plugin-macros = { workspace = true }
 zeta-utils = { workspace = true }
 
 [dev-dependencies]
+sqlx = { workspace = true, features = ["macros", "migrate"] }
 tokio = { workspace = true, features = ["test-util"] }
-zeta-test-support = { workspace = true }
+zeta-test-support = { workspace = true, features = ["database"] }
 
 [lints]
 workspace = true
