@@ -75,6 +75,7 @@ string-utils = ["dep:plugins-string-utils"]
 thingiverse = ["http", "dep:plugins-thingiverse"]
 tiktok = ["http", "dep:plugins-tiktok"]
 titles = ["http", "dep:plugins-titles"]
+tldr = ["database", "http", "dep:plugins-tldr"]
 trustpilot = ["http", "dep:plugins-trustpilot"]
 tvmaze = ["http", "dep:plugins-tvmaze"]
 twitch = ["http", "dep:plugins-twitch"]
@@ -112,6 +113,7 @@ all = [
     "thingiverse",
     "tiktok",
     "titles",
+    "tldr",
     "trustpilot",
     "tvmaze",
     "twitch",
@@ -152,6 +154,7 @@ plugins-string-utils = { workspace = true, optional = true }
 plugins-thingiverse = { workspace = true, optional = true }
 plugins-tiktok = { workspace = true, optional = true }
 plugins-titles = { workspace = true, optional = true }
+plugins-tldr = { workspace = true, optional = true }
 plugins-trustpilot = { workspace = true, optional = true }
 plugins-tvmaze = { workspace = true, optional = true }
 plugins-twitch = { workspace = true, optional = true }

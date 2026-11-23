@@ -54,6 +54,7 @@ macro_rules! for_each_bundled_plugin {
             "thingiverse"       => plugins_thingiverse::Thingiverse as thingiverse,
             "tiktok"            => plugins_tiktok::Tiktok as tiktok,
             "titles"            => plugins_titles::Titles as titles,
+            "tldr"              => plugins_tldr::Tldr as tldr,
             "trustpilot"        => plugins_trustpilot::Trustpilot as trustpilot,
             "tvmaze"            => plugins_tvmaze::Tvmaze as tvmaze,
             "twitch"            => plugins_twitch::Twitch as twitch,
